@@ -22,6 +22,11 @@ static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
 
 static std::atomic<int> g_nextRequest{1};
 
+// LOCAL (personal build): the initial user is signed up to PSN but offline, as a console without
+// network keeps its linked account: the account id resolves, everything online still fails.
+static constexpr int NP_INITIAL_USER_ID = 0x10000000;
+static constexpr uint64_t NP_OFFLINE_ACCOUNT_ID = 0x5053354f46464c4eull;
+
 namespace {
 std::mutex reachabilityMutex;
 void* reachabilityCallback = nullptr;
@@ -130,9 +135,10 @@ int APS5_VABI sceNpGetAccountCountryA(int user_id, void* country_code) {
 }
 
 int APS5_VABI sceNpGetAccountIdA(int user_id, uint64_t* account_id) {
-    (void)user_id;
-    (void)account_id;
-    return SCE_NP_ERROR_SIGNED_OUT;
+    if (!account_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (user_id != NP_INITIAL_USER_ID) return SCE_NP_ERROR_USER_NOT_FOUND;
+    *account_id = NP_OFFLINE_ACCOUNT_ID;
+    return 0;
 }
 
 int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id) {
@@ -164,7 +170,7 @@ int APS5_VABI sceNpGetState(int user_id, uint32_t* state) {
 int APS5_VABI sceNpHasSignedUp(int user_id, bool* has_signed_up) {
     (void)user_id;
     if (!has_signed_up) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    *has_signed_up = false;
+    *has_signed_up = user_id == NP_INITIAL_USER_ID;
     return 0;
 }
 
@@ -294,7 +300,9 @@ int APS5_VABI sceNpUnregisterPremiumEventCallback(void) {
 
 int APS5_VABI sceNpGetUserIdByAccountId(uint64_t account_id, int* user_id) {
     if (account_id == 0 || !user_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    return SCE_NP_ERROR_SIGNED_OUT;
+    if (account_id != NP_OFFLINE_ACCOUNT_ID) return SCE_NP_ERROR_USER_NOT_FOUND;
+    *user_id = NP_INITIAL_USER_ID;
+    return 0;
 }
 
 int APS5_VABI sceNpGetSandboxInfo(void* sandbox_info) {

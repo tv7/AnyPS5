@@ -210,7 +210,7 @@ int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
  if (account_id == nullptr || user_id != USER_SERVICE_INITIAL_USER_ID) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- *account_id = 0;
+ *account_id = 0x5053354f46464c4eull; // LOCAL (personal build): same offline account id as libSceNpManager
  return USER_SERVICE_OK;
 }
 
