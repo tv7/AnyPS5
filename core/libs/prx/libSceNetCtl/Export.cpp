@@ -1,3 +1,4 @@
+#include <cstdlib>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -468,15 +469,21 @@ int APS5_VABI sceNetCtlGetResult(int event_type, int* error_code) {
     return 0;
 }
 
+// LOCAL (personal build): APS5_NETCTL_OFFLINE=1 reports no network, as an offline console.
+static bool NetCtlOffline() {
+    static const bool offline = std::getenv("APS5_NETCTL_OFFLINE") != nullptr;
+    return offline;
+}
+
 int APS5_VABI sceNetCtlGetState(int* state) {
     if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    *state = HostHasAddress(AF_UNSPEC) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
+    *state = !NetCtlOffline() && HostHasAddress(AF_UNSPEC) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetStateV6(int* state) {
     if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    *state = HostHasAddress(AF_INET6) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
+    *state = !NetCtlOffline() && HostHasAddress(AF_INET6) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
     return 0;
 }
 

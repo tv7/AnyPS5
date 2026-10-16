@@ -282,11 +282,22 @@ int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
  return SYSTEM_SERVICE_OK;
 }
 
+// LOCAL (personal build): APS5_ENTITLEMENT_EVENT_SECS=N delivers event 0x10000018 every N seconds.
+static unsigned long long g_lastEntitlementEvent = 0;
+static bool EntitlementEventDue() {
+ static const unsigned long long period = [] { const char* v = std::getenv("APS5_ENTITLEMENT_EVENT_SECS"); return v ? std::strtoull(v, nullptr, 10) * 1000ull : 0ull; }();
+ if (period == 0) return false;
+ const auto now = GetTickCount64();
+ if (g_lastEntitlementEvent == 0) g_lastEntitlementEvent = now;
+ return now - g_lastEntitlementEvent >= period;
+}
+
 int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
  if (status == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  *status = SystemServiceStatus{};
+ if (EntitlementEventDue()) status->event_num = 1;
  return SYSTEM_SERVICE_OK;
 }
 
@@ -334,6 +345,13 @@ int APS5_VABI sceSystemServicePowerTick(void) {
 int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
  if (event == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+ if (EntitlementEventDue()) {
+  std::memset(event, 0, sizeof(*event));
+  event->event_type = 0x10000018;
+  g_lastEntitlementEvent = GetTickCount64();
+  std::fprintf(stderr, "[systemservice] LOCAL: delivered entitlement event 0x10000018\n");
+  return SYSTEM_SERVICE_OK;
  }
  return SYSTEM_SERVICE_ERROR_NO_EVENT;
 }
