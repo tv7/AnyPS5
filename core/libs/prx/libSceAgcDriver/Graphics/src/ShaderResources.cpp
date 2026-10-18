@@ -371,6 +371,14 @@ struct TextureCounters {
     std::atomic<std::uint64_t> fastMisses{0};
     std::atomic<std::uint64_t> storageHits{0};
     std::atomic<std::uint64_t> storageCreated{0};
+    // Why storage lookups missed and why entries left the cache (wolverine branch: churn census).
+    std::atomic<std::uint64_t> storageMissNewKey{0};
+    std::atomic<std::uint64_t> storageMissSeenKey{0};
+    std::atomic<std::uint64_t> storageEvictBudget{0};
+    std::atomic<std::uint64_t> storageEvictMoved{0};
+    std::atomic<std::uint64_t> storageEvictExtended{0};
+    std::atomic<std::uint64_t> storageEvictReclaim{0};
+    std::atomic<std::uint64_t> storageDistinctExtents{0};
     // Storage images a Revalidate refreshed directly instead of through the lookups (T1, see
     // ShaderResources::refreshOwnObjects).
     std::atomic<std::uint64_t> ownRefreshes{0};
@@ -399,7 +407,7 @@ void reportTextureCounters() {
     auto last = counters.lastReport.load();
     if (nowMs - last < 10000 || !counters.lastReport.compare_exchange_strong(last, nowMs)) return;
     const auto count = [](const std::atomic<std::uint64_t>& value) { return static_cast<unsigned long long>(value.load(std::memory_order_relaxed)); };
-    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved; untracked snapshots %llu kept by the write-watch hint, %llu compared\n", count(counters.fromStorage), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.untrackedKept), count(counters.untrackedCompared));
+    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved; untracked snapshots %llu kept by the write-watch hint, %llu compared; storage misses %llu new keys, %llu seen keys, %llu distinct extent+format; storage evictions %llu budget, %llu moved, %llu extended, %llu reclaim\n", count(counters.fromStorage), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.untrackedKept), count(counters.untrackedCompared), count(counters.storageMissNewKey), count(counters.storageMissSeenKey), count(counters.storageDistinctExtents), count(counters.storageEvictBudget), count(counters.storageEvictMoved), count(counters.storageEvictExtended), count(counters.storageEvictReclaim));
 }
 
 // What the sampled-texture lookups on this thread proved their returned objects current against,
@@ -1077,11 +1085,15 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
         if (resource.mipCount > AllocatedLevels(resource)) {
             auto allocated = resource;
             allocated.mipCount = AllocatedLevels(resource);
-            if (const auto found = findStorage(cache, {context.device, SurfaceKey(context, allocated)}); found != cache.entries.end()) evicted.push_back(evictStorage(cache, found));
+            if (const auto found = findStorage(cache, {context.device, SurfaceKey(context, allocated)}); found != cache.entries.end()) {
+                evicted.push_back(evictStorage(cache, found));
+                counters.storageEvictExtended.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         auto it = findStorage(cache, key);
         if (it != cache.entries.end() && MetadataMoved(*it->texture, resource)) {
             evicted.push_back(evictStorage(cache, it));
+            counters.storageEvictMoved.fetch_add(1, std::memory_order_relaxed);
             it = cache.entries.end();
         }
         if (it != cache.entries.end()) {
@@ -1091,6 +1103,13 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             counters.storageHits.fetch_add(1, std::memory_order_relaxed);
             if (profile) LookupOutcomes::Add(LookupOutcomes::StorageHit, start);
         } else {
+            {
+                static std::set<std::array<std::uint32_t, 8>> seenKeys;
+                static std::set<std::array<std::uint32_t, 3>> seenExtents;
+                if (seenKeys.insert(key.words).second) counters.storageMissNewKey.fetch_add(1, std::memory_order_relaxed);
+                else counters.storageMissSeenKey.fetch_add(1, std::memory_order_relaxed);
+                if (seenExtents.insert({resource.width, resource.height, key.words[7]}).second) counters.storageDistinctExtents.fetch_add(1, std::memory_order_relaxed);
+            }
             if (guestBytes == 0) guestBytes = DescribeSurface(resource).guestBytes;
             if (StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(guestBytes), nullptr, "storage image creation", PublishScope::None) && profile) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
             CachedStorageTexture entry{key, mip, StorageTexture::Create(context, *context.detiler, resource, mip)};
@@ -1098,7 +1117,10 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (auto* recorder = Recorder::Active(); keepNew && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) recorder->Keep(entry.texture);
             entry.accounted = heldBytes(*entry.texture);
             const auto budget = storageBudget(context);
-            while (!cache.entries.empty() && cache.bytes + entry.accounted > budget) evicted.push_back(evictStorage(cache, std::prev(cache.entries.end())));
+            while (!cache.entries.empty() && cache.bytes + entry.accounted > budget) {
+                evicted.push_back(evictStorage(cache, std::prev(cache.entries.end())));
+                counters.storageEvictBudget.fetch_add(1, std::memory_order_relaxed);
+            }
             cache.bytes += entry.accounted;
             texture = entry.texture;
             cache.entries.push_front(std::move(entry));
@@ -1307,6 +1329,7 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes) {
                             const auto accounted = it->accounted;
                             const auto next = std::next(it);
                             evicted.emplace_back(evictStorage(cache, it), accounted);
+                            TextureCounts().storageEvictReclaim.fetch_add(1, std::memory_order_relaxed);
                             batch += accounted;
                             it = next;
                         }
