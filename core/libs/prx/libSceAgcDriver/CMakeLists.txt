@@ -298,6 +298,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PassHazards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BarrierBatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/UnitShadow.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MemoryCensus.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${agcTextureDetileShaderHeader}
         ${agcReadbackHeaders}

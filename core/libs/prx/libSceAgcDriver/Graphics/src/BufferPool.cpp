@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MemoryCensus.hpp"
 #include <algorithm>
 #include <atomic>
 #include <bit>
@@ -54,6 +55,7 @@ BufferPool::~BufferPool() {
 
 VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType) {
     if (allocatedType != nullptr) *allocatedType = allocation.memoryTypeIndex;
+    const MemoryCensus::ScopedLabel label(operation);
     VkDeviceMemory memory = VK_NULL_HANDLE;
     auto result = allocateMemory(device, &allocation, nullptr, &memory);
     const auto initialResult = result;

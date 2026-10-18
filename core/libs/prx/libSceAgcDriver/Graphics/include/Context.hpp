@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 
+#include "prx/libSceAgcDriver/Graphics/include/MemoryCensus.hpp"
+
 namespace AgcDriver::Graphics {
 
 class TextureDetiler;
@@ -253,7 +255,7 @@ struct Context {
     TFunction Function(const char* name) const {
         Require(deviceProc != nullptr, "missing Vulkan device function resolver");
         ++DeviceProcLookups();
-        const auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
+        const auto function = reinterpret_cast<TFunction>(MemoryCensus::Wrap(name, deviceProc(device, name), memory));
         if (function == nullptr) throw std::runtime_error(std::string("AGC graphics: missing Vulkan function: ") + name);
         return function;
     }
