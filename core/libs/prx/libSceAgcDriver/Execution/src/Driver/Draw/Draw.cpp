@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 namespace AgcDriver::DriverDetail {
 
@@ -193,6 +194,25 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     for (const auto& patch : userPatches) writablePrograms[patch.program].userData[patch.index] = patch.value;
     const std::vector<DrawProgram>& programs = writesPrograms ? writablePrograms : decode->programs;
     if (const auto skipped = SkippedShader(); skipped != 0 && std::any_of(programs.begin(), programs.end(), [skipped](const DrawProgram& program) { return program.binary.codeAddress == skipped; })) return drawn();
+    static const bool emptyIndirectSkip = std::getenv("APS5_NO_EMPTY_INDIRECT_SKIP") == nullptr;
+    thread_local std::unordered_map<std::uint64_t, bool> cpuIndirectPrograms;
+    const auto recordDraws = [&](const Pm4::DrawArguments& arguments) { return arguments.count != 0 && arguments.instances != 0 && (!drawParameters.indexed || arguments.firstVertexOrIndex < drawParameters.indexCount); };
+    if (emptyIndirectSkip && drawParameters.indirect && !programs.empty()) {
+        const auto known = cpuIndirectPrograms.find(programs.front().binary.codeAddress);
+        if (known != cpuIndirectPrograms.end() && known->second) {
+            const auto& indirect = *drawParameters.indirect;
+            recordQueuedLabelsBeforeRead(submission.queue);
+            const auto readStart = std::chrono::steady_clock::now();
+            const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
+            bool any = false;
+            for (std::uint32_t record = 0; record < count && !any; ++record) any = recordDraws(Pm4::ReadDrawArguments(indirect, record));
+            if (!any) {
+                Graphics::CountEmptyIndirectDraw(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
+                timing.Mark("empty_indirect_skipped");
+                return drawn();
+            }
+        }
+    }
     const auto setMeshIndexBuffer = [&](const Pm4::DrawParameters& parameters) {
         if (!graphics.stages.mesh) return;
         auto& words = writablePrograms.front().userData;
@@ -419,6 +439,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         const auto& result = *programResults[i];
         if (i == 0 && drawParameters.indirect) {
             indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect);
+            if (emptyIndirectSkip) cpuIndirectPrograms[programs.front().binary.codeAddress] = indirectCpu.has_value();
         } else if (i == 0) {
             fold(result, drawParameters);
         }
