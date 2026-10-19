@@ -4853,6 +4853,20 @@ void ShaderResources::resolveImageTables() {
                 reusable = false;
                 continue;
             }
+            if (lazyTable && item != nullptr && !(element < binding.imageWritten.size() && binding.imageWritten[element]) && !LazyTableElementWanted(words)) {
+                ShaderRecompiler::ImageTableEntryPoison poison{};
+                std::copy(words.begin(), words.end(), poison.words.begin());
+                poison.dwordCount = static_cast<std::uint32_t>(words.size());
+                poison.resource = LazyTableResource;
+                poison.reason = static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::Budget);
+                table.poison.push_back(poison);
+                table.messages.emplace_back();
+                faultChecks = true;
+                table.map[faults + element] = ShaderRecompiler::ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(table.poison.size() - 1u));
+                NoteLazyTableSkipped();
+                reusable = false;
+                continue;
+            }
             GuestTextureResource resource{};
             std::uint64_t guestBytes = 0;
             bool firstLayer = false;
@@ -4907,13 +4921,6 @@ void ShaderResources::resolveImageTables() {
             }
             if (item == nullptr) {
                 table.map[faults + element] = rejectTableElement(table, words, "a sampled image table entry has no sampled image table binding");
-                reusable = false;
-                continue;
-            }
-            if (lazyTable && !LazyTableElementWanted(words)) {
-                table.map[faults + element] = rejectTableElement(table, words, LazyTableMessage);
-                table.poison.back().reason = static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::Budget);
-                NoteLazyTableSkipped();
                 reusable = false;
                 continue;
             }

@@ -316,7 +316,7 @@ void BdaResources::CheckFault() const {
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ImageTable) {
         const auto table = std::find_if(imageTables.begin(), imageTables.end(), [&](const ImageTableFaults& candidate) { return candidate.stage == report.stage; });
         const auto* tables = table != imageTables.end() ? &*table : imageTables.size() == 1 ? &imageTables.front() : nullptr;
-        if (tables != nullptr && report.bytes < tables->poison.size() && report.bytes < tables->messages.size() && tables->messages[report.bytes] == LazyTableMessage) {
+        if (tables != nullptr && report.bytes < tables->poison.size() && tables->poison[report.bytes].resource == LazyTableResource) {
             const auto& poison = tables->poison[report.bytes];
             MarkLazyTableElementWanted(std::span<const std::uint32_t>(poison.words.data(), poison.dwordCount));
             std::memset(fault->Bytes().data(), 0, fault->Bytes().size());

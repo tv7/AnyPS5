@@ -17,6 +17,7 @@ bool LoopGuardTripped();
 // fault check records its descriptor words as wanted instead of failing the dispatch, and the next
 // resolve of a table holding the same words builds it.
 inline constexpr const char* LazyTableMessage = "lazy table entry not built yet";
+inline constexpr std::uint32_t LazyTableResource = 0xfffffffeu;
 bool LazyTablesEnabled();
 std::uint32_t LazyTableMinElements();
 bool LazyTableElementWanted(std::span<const std::uint32_t> words);
