@@ -109,8 +109,11 @@ struct ImageTableColumnSnapshot {
     std::uint32_t keys = 0;
     std::uint32_t fault = 0;
     bool outside = false;
+    bool nested = false;
+    bool pointerKeyed = false;
     SharedValues<std::uint32_t> codes;
     SharedValues<DescriptorValue> words;
+    std::vector<std::uint64_t> pointers;
     SharedValues<std::pair<std::uint64_t, std::uint64_t>> readRanges;
 
     bool operator==(const ImageTableColumnSnapshot& other) const = default;
@@ -118,6 +121,7 @@ struct ImageTableColumnSnapshot {
 
 struct ImageTableSnapshot {
     std::vector<ImageTableColumnSnapshot> tables;
+    std::vector<ImageTableColumnSnapshot> nested;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     std::uint64_t shader = 0;
 
