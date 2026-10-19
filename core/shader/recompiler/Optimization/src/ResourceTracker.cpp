@@ -1667,7 +1667,18 @@ private:
         MakeSource(*handle, width, sampler, sampleAdjust, descriptor);
         std::uint32_t badDword = 0;
         if (!ValidateSource(descriptor, badDword)) {
-            fail(std::string(IrOpcodeName(expected)) + " dword " + std::to_string(badDword) + " is not a valid runtime value; chain: " + describeValueChain(descriptor.dwords[badDword], 8u));
+            static const bool nullUnresolved = [] {
+                const char* value = std::getenv("APS5_NULL_UNRESOLVED_IMAGES");
+                return value != nullptr && value[0] != '0';
+            }();
+            if (!nullUnresolved || (expected != IrOpcode::GetImageResource && expected != IrOpcode::GetSamplerResource)) {
+                fail(std::string(IrOpcodeName(expected)) + " dword " + std::to_string(badDword) + " is not a valid runtime value; chain: " + describeValueChain(descriptor.dwords[badDword], 8u));
+            }
+            std::fprintf(stderr, "[resources] %s: descriptor dword %u is not a runtime value; the shader reads a null descriptor there\n", std::string(IrOpcodeName(expected)).c_str(), badDword);
+            for (std::uint32_t i = 0; i < width; i++) {
+                handle->ReplaceArgument(i, &m_builder.Constant(0u));
+            }
+            MakeSource(*handle, width, sampler, sampleAdjust, descriptor);
         }
         source = InternSource(descriptor);
     }

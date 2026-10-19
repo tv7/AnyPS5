@@ -592,8 +592,11 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
     result.registrationModule = registration;
     result.stencilReplaySafe = (request.shader.stage == ShaderStage::Vertex || stencilReplay) && StencilReplaySafe(program);
-    if (stencilReplay) {
-        result.stencilReferences = StencilReferenceValues(program, request.context.pixel.has_value() && request.context.pixel->stencilOperationValueExport ? 8u : 0u);
+    const auto stencilShift = request.context.pixel.has_value() && request.context.pixel->stencilOperationValueExport ? 8u : 0u;
+    if (stencilReplay && StencilExportDropEnabled() && inputInfo.pixel != nullptr && StencilReplayRefusal(program, stencilShift, inputInfo.pixel->psEarlyZ, inputInfo.pixel->psOrderedPixelShader) != nullptr) {
+        std::fprintf(stderr, "[stencil] 0x%llx: stencil reference export dropped (%s)\n", static_cast<unsigned long long>(request.shader.codeAddress), StencilReplayRefusal(program, stencilShift, inputInfo.pixel->psEarlyZ, inputInfo.pixel->psOrderedPixelShader));
+    } else if (stencilReplay) {
+        result.stencilReferences = StencilReferenceValues(program, stencilShift);
         result.stencilReferenceDword = bindings.layout.stencilReferenceDword;
     }
 

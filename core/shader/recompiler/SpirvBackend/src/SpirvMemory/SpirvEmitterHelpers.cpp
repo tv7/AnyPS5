@@ -411,10 +411,14 @@ void DefineOutputs(SpirvEmitterState& state) {
             break;
         case StageOutputKind::StencilRef:
             if (std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == state.supportedCapabilities.end()) {
-                const auto values = StencilReferenceValues(state.program, PixelInfo(state).psStencilOperationValueExport ? 8u : 0u);
-                if (values.empty()) throw std::runtime_error("stencil reference export emulation found no stencil export");
-                if (!StencilReferenceDefinedForKeptInvocations(state.program)) throw std::runtime_error("stencil reference export emulation requires a stencil export on every kept path");
-                if (PixelInfo(state).psEarlyZ || PixelInfo(state).psOrderedPixelShader || !StencilReplaySafe(state.program)) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
+                if (const char* refusal = StencilReplayRefusal(state.program, PixelInfo(state).psStencilOperationValueExport ? 8u : 0u, PixelInfo(state).psEarlyZ, PixelInfo(state).psOrderedPixelShader)) {
+                    if (!StencilExportDropEnabled()) throw std::runtime_error(refusal);
+                    state.stencilDropped = true;
+                    state.stencilRefVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeI32(state)), spv::StorageClassPrivate);
+                    if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.stencilRefVariable);
+                    binding.variableId = state.stencilRefVariable;
+                    break;
+                }
                 state.stencilReplay = true;
                 state.stencilRefVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeI32(state)), spv::StorageClassPrivate);
                 if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.stencilRefVariable);

@@ -5,6 +5,7 @@
 #include <functional>
 #include <iterator>
 #include <map>
+#include <cstdlib>
 #include <numeric>
 #include <optional>
 #include <set>
@@ -747,6 +748,21 @@ bool StencilReplaySafe(const IrProgram& program) {
         }
     }
     return !masks || MaskReplaySafety(program).Check();
+}
+
+const char* StencilReplayRefusal(const IrProgram& program, std::uint32_t shift, bool earlyZ, bool orderedPixelShader) {
+    if (StencilReferenceValues(program, shift).empty()) return "stencil reference export emulation found no stencil export";
+    if (!StencilReferenceDefinedForKeptInvocations(program)) return "stencil reference export emulation requires a stencil export on every kept path";
+    if (earlyZ || orderedPixelShader || !StencilReplaySafe(program)) return "stencil reference export emulation requires a replay-safe pixel shader with late tests";
+    return nullptr;
+}
+
+bool StencilExportDropEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("APS5_STENCIL_EXPORT_DROP");
+        return value != nullptr && value[0] != '0';
+    }();
+    return enabled;
 }
 
 }
