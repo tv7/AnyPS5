@@ -4761,6 +4761,12 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     recorder.MarkCovered(dispatchedAccess);
     recordStep(PhaseRecordBind);
     resources.MarkGpuWrites(recorder);
+    static const std::uint64_t watchedWrite = [] { const char* value = std::getenv("APS5_WATCH_GPU_WRITE"); return value != nullptr ? std::strtoull(value, nullptr, 16) : 0ull; }();
+    if (watchedWrite != 0) {
+        for (const auto& [first, second] : resources.GpuWrites()) {
+            if ((watchedWrite >= first && watchedWrite < second) || (watchedWrite >= first && watchedWrite - first < second)) std::fprintf(stderr, "[watch] dispatch 0x%llx writes 0x%llx (range 0x%llx, 0x%llx)\n", static_cast<unsigned long long>(record.programAddress), static_cast<unsigned long long>(watchedWrite), static_cast<unsigned long long>(first), static_cast<unsigned long long>(second));
+        }
+    }
     recordStep(PhaseRecordMarks);
     // Only copied written buffers (and BDA fault checks) need work once the GPU is done; without them
     // the batch can signal its labels from the GPU.

@@ -1664,6 +1664,8 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
 }
 
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
+    static const std::uint64_t watchedWrite = [] { const char* value = std::getenv("APS5_WATCH_GPU_WRITE"); return value != nullptr ? std::strtoull(value, nullptr, 16) : 0ull; }();
+    if (watchedWrite != 0 && watchedWrite >= address && watchedWrite - address < bytes) std::fprintf(stderr, "[watch] GPU write marked over 0x%llx (0x%llx+0x%zx)\n", static_cast<unsigned long long>(watchedWrite), static_cast<unsigned long long>(address), bytes);
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     tracker.initialize();

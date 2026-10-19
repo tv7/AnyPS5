@@ -1471,6 +1471,16 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
             snapshot.buffers.at(i).dwords[1] &= ~0x40000000u;
             snapshot.buffers.at(i).dwords[3] = 0u;
         }
+        static const bool nullNonBuffer = [] {
+            const char* value = std::getenv("APS5_NONBUFFER_VSHARP_NULL");
+            return value != nullptr && value[0] != '0';
+        }();
+        if (nullNonBuffer && decodeBufferDescriptor(snapshot.buffers.at(i)).Type() != 0u) {
+            auto& words = snapshot.buffers.at(i).dwords;
+            static std::atomic<std::uint32_t> reported{0};
+            if (reported.fetch_add(1u, std::memory_order_relaxed) < 16u) std::fprintf(stderr, "[resources] buffer %u V# %08x %08x %08x %08x is not a buffer descriptor; the shader reads a null buffer there\n", i, words[0], words[1], words[2], words[3]);
+            std::fill(std::begin(words), std::end(words), 0u);
+        }
         const auto decoded = decodeBufferDescriptor(snapshot.buffers.at(i));
         if (decoded.Type() != 0u) {
             const auto& words = snapshot.buffers.at(i).dwords;
