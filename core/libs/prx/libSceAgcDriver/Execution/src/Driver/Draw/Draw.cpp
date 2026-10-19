@@ -578,10 +578,16 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             }
             Pm4::DrawParameters direct{0, arguments.count, 0, arguments.instances, drawParameters.flags, drawParameters.indexed, 0, 0};
             if (drawParameters.indexed) {
-
-                if (arguments.firstVertexOrIndex >= drawParameters.indexCount) continue;
+                if (indirect.indexLimitKnown) {
+                    if (arguments.firstVertexOrIndex >= drawParameters.indexCount) continue;
+                    direct.indexCount = std::min(arguments.count, drawParameters.indexCount - arguments.firstVertexOrIndex);
+                } else {
+                    const auto end = static_cast<std::uint64_t>(arguments.firstVertexOrIndex) + arguments.count;
+                    require(end <= std::numeric_limits<std::uint32_t>::max(), "indirect draw index range overflow");
+                    require(end * drawParameters.indexSize <= std::numeric_limits<std::uint64_t>::max() - drawParameters.indexAddress, "indirect draw index range address overflow");
+                    direct.indexCount = arguments.count;
+                }
                 direct.indexAddress = drawParameters.indexAddress + static_cast<std::uint64_t>(arguments.firstVertexOrIndex) * drawParameters.indexSize;
-                direct.indexCount = std::min(arguments.count, drawParameters.indexCount - arguments.firstVertexOrIndex);
                 direct.indexSize = drawParameters.indexSize;
             } else {
                 direct.firstVertex = indirect.indxOffset;
