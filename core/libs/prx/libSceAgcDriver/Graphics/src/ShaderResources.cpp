@@ -4838,6 +4838,13 @@ void ShaderResources::resolveImageTables() {
         ReusedTable fresh;
         fresh.bound.assign(binding.count, {});
         bool reusable = state.epoch != 0;
+        static const bool tableStats = std::getenv("APS5_TABLE_STATS") != nullptr;
+        const auto statsCreated = counters.storageCreated.load(std::memory_order_relaxed);
+        const auto statsHits = counters.storageHits.load(std::memory_order_relaxed);
+        const auto statsStorage = storageTextures.size();
+        std::uint64_t statsWrittenBytes = 0;
+        std::uint64_t statsSampledBytes = 0;
+        const bool lazyTable = LazyTablesEnabled() && binding.count >= LazyTableMinElements();
         for (std::uint32_t element = 0; element < binding.count; ++element) {
             const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
             const auto absolute = static_cast<std::uint64_t>(table.elementBase) + element;
@@ -4887,6 +4894,7 @@ void ShaderResources::resolveImageTables() {
                     table.map[faults + element] = rejectTableElement(table, words, error.what());
                     continue;
                 }
+                statsWrittenBytes += guestBytes;
                 storageMips.push_back(mip);
                 storageKeys.push_back(resource.dccAddress);
                 storageFirstLayer.push_back(firstLayer);
@@ -4902,12 +4910,20 @@ void ShaderResources::resolveImageTables() {
                 reusable = false;
                 continue;
             }
+            if (lazyTable && !LazyTableElementWanted(words)) {
+                table.map[faults + element] = rejectTableElement(table, words, LazyTableMessage);
+                table.poison.back().reason = static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::Budget);
+                NoteLazyTableSkipped();
+                reusable = false;
+                continue;
+            }
             CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
             if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
             std::shared_ptr<Texture> texture;
             const auto components = ViewComponents(resource);
             const bool depthCompare = binding.imageDepthCompare.at(element);
             const VkImageViewType multisampleViewType = shape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+            statsSampledBytes += guestBytes;
             try {
                 texture = cachedTexture(context, words, resource, components, guestBytes, depthCompare, multisampleViewType);
             } catch (const std::runtime_error& error) {
@@ -4928,6 +4944,7 @@ void ShaderResources::resolveImageTables() {
             fresh.bound[element] = bind(element, words, std::move(texture), resource, guestBytes, firstLayer);
         }
         counters.tablesResolved.fetch_add(1, std::memory_order_relaxed);
+        if (tableStats) std::fprintf(stderr, "[tablestats] set %u base %u: %u elements, %zu storage (%.0f MiB), sampled %.0f MiB, storage created %llu hits %llu; lazy skipped %llu wanted %llu (all tables)\n", table.set, table.elementBase, binding.count, storageTextures.size() - statsStorage, statsWrittenBytes / 1048576.0, statsSampledBytes / 1048576.0, static_cast<unsigned long long>(counters.storageCreated.load(std::memory_order_relaxed) - statsCreated), static_cast<unsigned long long>(counters.storageHits.load(std::memory_order_relaxed) - statsHits), static_cast<unsigned long long>(LazyTableCounters().skipped), static_cast<unsigned long long>(LazyTableCounters().wanted));
         if (reusable && CurrentTableState() == state) {
             const auto serial = StorageTexture::PendingSerial();
             if (!StorageTexture::AnyPendingOverlaps(fresh.ranges) && StorageTexture::PendingSerial() == serial) {

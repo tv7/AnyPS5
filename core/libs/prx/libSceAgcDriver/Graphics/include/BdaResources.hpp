@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "Recompiler.hpp"
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -10,6 +11,22 @@
 namespace AgcDriver::Graphics {
 
 bool LoopGuardTripped();
+
+// APS5_LAZY_TABLES: sampled entries of large image tables are built only after a shader selected
+// them. An entry not built yet is poisoned with LazyTableMessage; when the shader selects it, the
+// fault check records its descriptor words as wanted instead of failing the dispatch, and the next
+// resolve of a table holding the same words builds it.
+inline constexpr const char* LazyTableMessage = "lazy table entry not built yet";
+bool LazyTablesEnabled();
+std::uint32_t LazyTableMinElements();
+bool LazyTableElementWanted(std::span<const std::uint32_t> words);
+void MarkLazyTableElementWanted(std::span<const std::uint32_t> words);
+struct LazyTableCounts {
+    std::uint64_t skipped = 0;
+    std::uint64_t wanted = 0;
+};
+LazyTableCounts LazyTableCounters();
+void NoteLazyTableSkipped();
 
 class BdaResources {
 public:

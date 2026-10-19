@@ -12,6 +12,8 @@
 #include <mutex>
 #include <iomanip>
 #include <sstream>
+#include <string>
+#include <unordered_set>
 
 namespace AgcDriver::Graphics {
 
@@ -239,6 +241,61 @@ bool LoopGuardTripped() {
     return loopGuardTripped.load(std::memory_order_relaxed);
 }
 
+namespace {
+struct LazyWanted {
+    std::mutex mutex;
+    std::unordered_set<std::string> words;
+    std::atomic<std::uint64_t> skipped{0};
+    std::atomic<std::uint64_t> wanted{0};
+};
+
+LazyWanted& Lazy() {
+    static LazyWanted lazy;
+    return lazy;
+}
+
+std::string LazyKey(std::span<const std::uint32_t> words) {
+    return std::string(reinterpret_cast<const char*>(words.data()), words.size() * sizeof(std::uint32_t));
+}
+}
+
+bool LazyTablesEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("APS5_LAZY_TABLES");
+        return value != nullptr && value[0] != '0';
+    }();
+    return enabled;
+}
+
+std::uint32_t LazyTableMinElements() {
+    static const std::uint32_t minimum = [] {
+        const char* value = std::getenv("APS5_LAZY_TABLES_MIN");
+        return value != nullptr ? static_cast<std::uint32_t>(std::strtoul(value, nullptr, 10)) : 256u;
+    }();
+    return minimum;
+}
+
+bool LazyTableElementWanted(std::span<const std::uint32_t> words) {
+    auto& lazy = Lazy();
+    std::lock_guard lock(lazy.mutex);
+    return lazy.words.contains(LazyKey(words));
+}
+
+void MarkLazyTableElementWanted(std::span<const std::uint32_t> words) {
+    auto& lazy = Lazy();
+    std::lock_guard lock(lazy.mutex);
+    if (lazy.words.insert(LazyKey(words)).second) lazy.wanted.fetch_add(1, std::memory_order_relaxed);
+}
+
+LazyTableCounts LazyTableCounters() {
+    auto& lazy = Lazy();
+    return {lazy.skipped.load(std::memory_order_relaxed), lazy.wanted.load(std::memory_order_relaxed)};
+}
+
+void NoteLazyTableSkipped() {
+    Lazy().skipped.fetch_add(1, std::memory_order_relaxed);
+}
+
 void BdaResources::CheckFault() const {
     markWrittenPages();
     ShaderRecompiler::BdaAbi::Fault report{};
@@ -259,6 +316,12 @@ void BdaResources::CheckFault() const {
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ImageTable) {
         const auto table = std::find_if(imageTables.begin(), imageTables.end(), [&](const ImageTableFaults& candidate) { return candidate.stage == report.stage; });
         const auto* tables = table != imageTables.end() ? &*table : imageTables.size() == 1 ? &imageTables.front() : nullptr;
+        if (tables != nullptr && report.bytes < tables->poison.size() && report.bytes < tables->messages.size() && tables->messages[report.bytes] == LazyTableMessage) {
+            const auto& poison = tables->poison[report.bytes];
+            MarkLazyTableElementWanted(std::span<const std::uint32_t>(poison.words.data(), poison.dwordCount));
+            std::memset(fault->Bytes().data(), 0, fault->Bytes().size());
+            return;
+        }
         std::ostringstream message;
         message << "image table: shader 0x" << std::hex << (tables != nullptr ? tables->shader : 0u) << std::dec << " stage " << report.stage << " pc 0x" << std::hex << report.instruction << " selected the descriptor at 0x" << report.address << std::dec;
         if (tables != nullptr && report.bytes < tables->poison.size()) {
