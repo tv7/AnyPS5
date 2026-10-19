@@ -750,7 +750,21 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
+    static const bool linkProfile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const auto linkStart = linkProfile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     auto linked = LinkUserDataCallees(request);
+    if (linkProfile) {
+        static std::atomic<std::uint64_t> linkCalls{0}, linkLinked{0}, linkNanoseconds{0};
+        static std::atomic<std::int64_t> linkReported{0};
+        linkCalls.fetch_add(1, std::memory_order_relaxed);
+        if (!linked.code.empty()) linkLinked.fetch_add(1, std::memory_order_relaxed);
+        linkNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - linkStart).count()), std::memory_order_relaxed);
+        const auto nowSeconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto last = linkReported.load(std::memory_order_relaxed);
+        if (nowSeconds - last >= 10 && linkReported.compare_exchange_strong(last, nowSeconds)) {
+            std::fprintf(stderr, "[link] (10 s): %llu invocations, %llu linked, %.1f ms linking\n", static_cast<unsigned long long>(linkCalls.exchange(0)), static_cast<unsigned long long>(linkLinked.exchange(0)), static_cast<double>(linkNanoseconds.exchange(0)) / 1e6);
+        }
+    }
     if (linked.code.empty()) linked.code = LinkGraphicsUserDataTail(request, snapshot);
     auto source = request;
     if (!linked.code.empty()) {
