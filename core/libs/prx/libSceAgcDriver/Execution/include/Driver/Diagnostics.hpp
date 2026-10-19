@@ -9,6 +9,8 @@ namespace AgcDriver::DriverDetail {
 double TraceMs();
 
 std::uint64_t SkippedShader();
+// APS5_SKIP_SHADER: comma-separated hex program addresses whose dispatches and draws are skipped.
+bool ShaderSkipped(std::uint64_t address);
 
 void require(bool condition, const char* reason);
 

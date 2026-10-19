@@ -193,7 +193,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     if (writesPrograms) writablePrograms = decode->programs;
     for (const auto& patch : userPatches) writablePrograms[patch.program].userData[patch.index] = patch.value;
     const std::vector<DrawProgram>& programs = writesPrograms ? writablePrograms : decode->programs;
-    if (const auto skipped = SkippedShader(); skipped != 0 && std::any_of(programs.begin(), programs.end(), [skipped](const DrawProgram& program) { return program.binary.codeAddress == skipped; })) return drawn();
+    if (std::any_of(programs.begin(), programs.end(), [](const DrawProgram& program) { return ShaderSkipped(program.binary.codeAddress); })) return drawn();
     static const bool emptyIndirectSkip = std::getenv("APS5_NO_EMPTY_INDIRECT_SKIP") == nullptr;
     thread_local std::unordered_map<std::uint64_t, bool> cpuIndirectPrograms;
     const auto recordDraws = [&](const Pm4::DrawArguments& arguments) { return arguments.count != 0 && arguments.instances != 0 && (!drawParameters.indexed || arguments.firstVertexOrIndex < drawParameters.indexCount); };

@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <vector>
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include <cstdlib>
@@ -13,6 +15,22 @@ double TraceMs() {
 std::uint64_t SkippedShader() {
     static const std::uint64_t skipped = [] { const char* text = std::getenv("APS5_SKIP_SHADER"); return text ? std::strtoull(text, nullptr, 16) : 0ull; }();
     return skipped;
+}
+
+bool ShaderSkipped(std::uint64_t address) {
+    static const std::vector<std::uint64_t> skipped = [] {
+        std::vector<std::uint64_t> addresses;
+        const char* text = std::getenv("APS5_SKIP_SHADER");
+        while (text != nullptr && *text != '\0') {
+            char* end = nullptr;
+            const auto value = std::strtoull(text, &end, 16);
+            if (end == text) break;
+            if (value != 0) addresses.push_back(value);
+            text = *end == ',' ? end + 1 : end;
+        }
+        return addresses;
+    }();
+    return address != 0 && std::find(skipped.begin(), skipped.end(), address) != skipped.end();
 }
 
 void require(bool condition, const char* reason) {
