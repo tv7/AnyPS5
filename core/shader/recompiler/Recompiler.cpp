@@ -1317,8 +1317,7 @@ void reportResultMemo() {
     const auto populate = counters.populateNanoseconds.exchange(0, std::memory_order_relaxed);
     std::array<double, 5> steps{};
     for (std::size_t index = 0; index < steps.size(); ++index) steps[index] = static_cast<double>(materializeStepNanoseconds[index].exchange(0, std::memory_order_relaxed)) / 1e6;
-    std::fprintf(stderr, "[recompile] materialize steps (10 s, ms): plan %.1f module %.1f image tables %.1f populate %.1f tail %.1f
-", steps[0], steps[1], steps[2], steps[3], steps[4]);
+    std::fprintf(stderr, "[recompile] materialize steps (10 s, ms): plan %.1f module %.1f image tables %.1f populate %.1f tail %.1f\n", steps[0], steps[1], steps[2], steps[3], steps[4]);
     std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu misses (%.1f%% hits), Populate %.1f us per miss / %.1f ms in total, %llu evictions\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(misses), hits + misses != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(hits + misses) : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, static_cast<unsigned long long>(evictions));
 }
 
