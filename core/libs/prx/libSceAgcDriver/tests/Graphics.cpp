@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "ShaderDiskCache.hpp"
+#include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -51,6 +52,7 @@
 #include <random>
 #include <initializer_list>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -1673,7 +1675,12 @@ void DisabledColorTests() {
     Require(!state.hasColorTarget && state.color.address == 0 && state.color.bytes == 0, "disabled color writes accessed a color surface");
     Require(state.renderExtent.width == 64 && state.renderExtent.height == 4, "attachment-free framebuffer lost screen scissor extent");
     queue.context[0xd] = 0;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "empty framebuffer extent");
+    const auto emptyScreen = AgcDriver::Graphics::DecodeState(queue);
+    Require(emptyScreen.renderExtent.width == 1 && emptyScreen.renderExtent.height == 1, "an empty screen scissor without targets did not get a one-pixel framebuffer");
+    Require(emptyScreen.scissor.extent.width == 0 && emptyScreen.scissor.extent.height == 0, "an empty screen scissor without targets rasterized pixels");
+    queue.context[0xd] = 64u;
+    const auto emptyRows = AgcDriver::Graphics::DecodeState(queue);
+    Require(emptyRows.renderExtent.width == 64 && emptyRows.scissor.extent.height == 0, "a screen scissor without rows rasterized pixels");
     queue = makeState();
     queue.context[0x8e] = 3;
     const auto partial = AgcDriver::Graphics::DecodeState(queue);
@@ -2341,7 +2348,8 @@ void DepthStencilTests() {
     const auto firstSlice = AgcDriver::Graphics::DecodeState(queue);
     Require(firstSlice.color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()), "a color view of several slices did not retain its first slice");
     queue.context[0x207] = 1u << 18u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "layered draws into a color view of several array slices");
+    const auto layeredSingle = AgcDriver::Graphics::DecodeState(queue);
+    Require(layeredSingle.color.address == firstSlice.color.address && layeredSingle.color.arrayAddress == firstSlice.color.address && layeredSingle.color.arrayLastSlice == 1u && layeredSingle.color.layers == 2u && layeredSingle.renderLayers == 2u, "a layered draw into slices 0 to 1 of a surface of one slice did not render them as a two-slice array");
     queue.context[0x207] = 0;
     const auto sliced = reinterpret_cast<std::uintptr_t>(sliceMemory.data());
     queue.context[0x318] = static_cast<std::uint32_t>(sliced >> 8u);
@@ -2356,7 +2364,8 @@ void DepthStencilTests() {
     const auto range = AgcDriver::Graphics::DecodeState(queue);
     Require(range.color.address == sliced && range.color.bytes == 1024u, "a color view of slices 0 to 1 of a 2D array target did not render into its first slice");
     queue.context[0x207] = 1u << 18u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "layered draws into a color view of several array slices");
+    const auto layeredArray = AgcDriver::Graphics::DecodeState(queue);
+    Require(layeredArray.color.address == sliced && layeredArray.color.arraySlice == 0u && layeredArray.color.layers == 2u && layeredArray.renderLayers == 2u && layeredArray.layerExports != 0u, "a layeredArray draw into slices 0 to 1 of a 2D array target did not render two layers");
     queue.context[0x207] = 0;
     queue.context[0x31b] = 2u | (2u << 13u);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "beyond the array surface");
@@ -2594,6 +2603,28 @@ void DepthBoundsBiasTests() {
     queue.context[0x009] = bits(0.75f);
     auto state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.depthTest && state.depthBoundsTest && state.minDepthBounds == 0.25f && state.maxDepthBounds == 0.75f, "depth bounds decode changed");
+    const auto infinity = std::numeric_limits<float>::infinity();
+    for (const auto bounds : {std::array{0.0f, infinity}, std::array{-infinity, 1.0f}, std::array{-infinity, infinity}}) {
+        queue.context[0x008] = bits(bounds[0]);
+        queue.context[0x009] = bits(bounds[1]);
+        state = AgcDriver::Graphics::DecodeState(queue);
+        Require(state.depthBoundsTest && state.minDepthBounds == bounds[0] && state.maxDepthBounds == bounds[1], "infinite depth bounds changed");
+        AgcDriver::Graphics::Context context{};
+        expectFailure([&] { AgcDriver::Graphics::ValidateDepthBounds(context, state); }, "depth bounds outside [0, 1]");
+        context.depthRangeUnrestricted = true;
+        AgcDriver::Graphics::ValidateDepthBounds(context, state);
+    }
+    for (const auto offset : {0x008u, 0x009u}) {
+        queue.context[0x008] = bits(0.25f);
+        queue.context[0x009] = bits(0.75f);
+        queue.context[offset] = bits(std::numeric_limits<float>::quiet_NaN());
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "NaN depth bound");
+    }
+    queue.context[0x008] = bits(0.25f);
+    queue.context[0x009] = bits(0.75f);
+    queue.context[0x00b] = bits(infinity);
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register");
+    queue.context[0x00b] = bits(0.0f);
     queue.context[0x1b3] = 2;
     queue.context[0x1b4] = 2;
     const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
@@ -4369,6 +4400,7 @@ struct MockVulkan {
     VkDeviceSize allocatedBytes = 0;
     std::optional<VkDeviceSize> memoryLimit;
     std::uint64_t allocationAttempts = 0;
+    std::optional<VkDeviceSize> importLimit;
     std::uint32_t bufferMemoryTypeBits = 1;
     std::vector<std::uint32_t> allocationTypes;
     std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
@@ -4440,6 +4472,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAlloca
     ++mock.allocationAttempts;
     mock.allocationTypes.push_back(info->memoryTypeIndex);
     if (mock.memoryLimit.has_value() && mock.allocatedBytes + info->allocationSize > *mock.memoryLimit) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    if (mock.importLimit.has_value() && info->allocationSize > *mock.importLimit && info->pNext != nullptr && static_cast<const VkMemoryAllocateFlagsInfo*>(info->pNext)->pNext != nullptr) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     *memory = makeHandle<VkDeviceMemory>();
     mock.memories[*memory] = std::vector<std::byte>(info->allocationSize);
     mock.allocationSizes[*memory] = info->allocationSize;
@@ -4810,6 +4843,7 @@ AgcDriver::Graphics::Context mockContext() {
     context.limits.maxPerStageDescriptorStorageBuffers = 16;
     context.limits.maxPerStageResources = 128;
     context.limits.maxDescriptorSetStorageBuffers = 32;
+    context.limits.maxImageArrayLayers = 2048;
     return context;
 }
 
@@ -8746,6 +8780,14 @@ void unorm10_11_11TargetTests() {
     auto plainState = state;
     plainState.colors[0].packing = ColorExportPacking::None;
     expectFailure([&] { validate(packed, plainState); }, "float4 colors");
+    auto targetless = plainState;
+    targetless.colors.clear();
+    targetless.blends.clear();
+    Require(validate(packed, targetless) == std::set<std::uint32_t>{0u}, "a uint4 export from a draw with no color target was refused");
+    auto gap = plainState;
+    gap.blends.insert(gap.blends.begin(), gap.blends.front());
+    gap.colors[0].exportIndex = 1;
+    Require(validate(packed, gap) == std::set<std::uint32_t>{0u}, "a uint4 export into the unused slot below a color target was refused");
     auto uintExport = request;
     uintExport.context.pixel->targetOutputMode[0] = 7;
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(uintExport)); }, "fragment output 0 has no color export packing path");
@@ -9746,21 +9788,36 @@ void pipelineStoreLazyBufferPoolTests() {
     Require(mock.live == 0, "lazy buffer pool pipeline tests leaked Vulkan objects");
 }
 
-void pipelineJournalTests() {
+void pipelineJournalTests(bool longPath = false, bool extended = false) {
     using namespace AgcDriver::Graphics;
     using Stage = ShaderRecompiler::ShaderStage;
-    const auto directory = std::filesystem::temp_directory_path() / ("aps5-pipeline-journal-mock-" + std::to_string(std::random_device{}()));
+    const auto root = std::filesystem::temp_directory_path() / ("aps5-pipeline-journal-mock-" + std::to_string(std::random_device{}()));
+    auto directory = root;
+    if (longPath) {
+        Require(root.native().size() < 180, "the temporary root is too long for the journal path fixture");
+        directory /= std::filesystem::path(u8"cache-\u00e4\u6f22");
+        directory /= std::string(229 - directory.native().size(), 'd');
+    }
     std::filesystem::create_directories(directory);
     struct Cleanup {
         std::filesystem::path directory;
+        std::filesystem::path journal;
         ~Cleanup() {
+            ShaderRecompiler::ShaderDiskCache::Shutdown();
             std::error_code error;
+            if (!journal.empty()) {
+                std::filesystem::remove(journal, error);
+                auto lock = journal;
+                lock += ".lock";
+                std::filesystem::remove(lock, error);
+            }
             std::filesystem::remove_all(directory, error);
         }
-    } cleanup{directory};
+    } cleanup{root, {}};
 #ifdef _WIN32
+    if (extended) directory = std::filesystem::path(L"\\\\?\\" + directory.make_preferred().native());
     _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
-    _putenv_s("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str());
+    _wputenv_s(L"ANYPS5_SHADER_CACHE_DIR", directory.c_str());
     _putenv_s("APS5_PIPELINE_JOURNAL_THREADS", "2");
 #else
     setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
@@ -9768,6 +9825,14 @@ void pipelineJournalTests() {
     setenv("APS5_PIPELINE_JOURNAL_THREADS", "2", 1);
 #endif
     Require(PipelineJournalEnabled(), "the journal is disabled with a shader cache directory set");
+    auto journalFile = PipelineJournalPath();
+#ifdef _WIN32
+    std::error_code pathError;
+    journalFile = ShaderRecompiler::NativeCachePath_nid_no_patch(journalFile, pathError);
+    Require(!pathError, "cannot normalize the journal fixture path");
+#endif
+    cleanup.journal = journalFile;
+    if (longPath) Require(journalFile.native().size() > 260, "the journal fixture did not cross MAX_PATH");
     const auto module = [](std::uint32_t salt) {
         ShaderRecompiler::RecompileResult result;
         result.spirv = std::vector<std::uint32_t>{0x07230203u, 0x00010000u, 0u, 8u, 0u, 0x00020011u, 1u, 0x00020011u, 2u + salt};
@@ -9959,13 +10024,15 @@ void pipelineJournalTests() {
         FlushPipelineJournal();
         const auto repeated = PipelineJournalTotals();
         Require(repeated.recordedGraphics == recorded.recordedGraphics && repeated.recordedCompute == recorded.recordedCompute && repeated.recordedModules == recorded.recordedModules, "a repeated pipeline was recorded again");
-        Require(std::filesystem::file_size(PipelineJournalPath()) > 0, "the journal file is empty");
+        Require(std::filesystem::file_size(journalFile) > 0, "the journal file is empty");
         const auto storeBefore = PipelineStoreTotals();
         std::vector<std::byte> receivedWords;
         ShaderRecompiler::RecompileResult received;
         bool receivedPush = false;
         std::uint32_t computeCalls = 0;
+        std::mutex computeMutex;
         PipelineJournalHooks hooks{[&](const ShaderRecompiler::RecompileResult& shader, bool pushConstants) {
+            std::lock_guard lock(computeMutex);
             ++computeCalls;
             received = shader;
             receivedPush = pushConstants;
@@ -9988,7 +10055,7 @@ void pipelineJournalTests() {
         const auto storeHit = PipelineStoreTotals();
         Require(pipeline != nullptr && !built && mock.pipelineCreateCount == created && storeHit.hits == storeReplayed.hits + 1 && storeHit.misses == storeReplayed.misses, "the draw's configuration did not find the replayed pipeline");
         {
-            const auto journalPath = PipelineJournalPath();
+            const auto& journalPath = journalFile;
             const auto whole = std::filesystem::file_size(journalPath);
             Require(whole % 8 == 0 && whole > 3, "the journal file is not record aligned");
             std::filesystem::resize_file(journalPath, whole - 3);
@@ -10002,9 +10069,33 @@ void pipelineJournalTests() {
             torn->Wait();
             const auto reloaded = PipelineJournalTotals();
             Require(reloaded.droppedRecords == 0 && reloaded.loadedModules == 4 && reloaded.loadedRecipes == 2 && reloaded.replayFailed == 0, "the journal did not recover from a tail torn inside a record's padding");
+            const auto writtenBefore = PipelineJournalTotals().writtenBytes;
             RecordComputePipeline(compute, true);
             FlushPipelineJournal();
             Require(PipelineJournalTotals().recordedCompute == reloaded.recordedCompute + 1 && PipelineJournalTotals().recordedModules == reloaded.recordedModules, "the pipeline whose record was torn was not recorded again, or its module was");
+            const auto recordBytes = PipelineJournalTotals().writtenBytes - writtenBefore;
+            std::vector<std::byte> bytes;
+            Require(ShaderRecompiler::ReadWholeFile(journalFile, bytes) && recordBytes > 0 && recordBytes <= bytes.size(), "cannot read the re-recorded journal entry");
+            {
+                std::ofstream file(journalFile, std::ios::binary | std::ios::app);
+                file.write(reinterpret_cast<const char*>(bytes.data() + bytes.size() - recordBytes), static_cast<std::streamsize>(recordBytes));
+                const std::array<char, 8> tornTail{};
+                file.write(tornTail.data(), tornTail.size());
+                file.close();
+                Require(file.good(), "cannot append an external complete record and torn tail");
+            }
+            auto another = module(5);
+            another.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, std::vector<std::uint32_t>(4)));
+            const auto beforeAppend = PipelineJournalTotals();
+            RecordComputePipeline(another, false);
+            FlushPipelineJournal();
+            const auto appended = PipelineJournalTotals();
+            Require(appended.writeFailures == 0 && appended.recordedCompute == beforeAppend.recordedCompute + 1, "the append after an external torn tail failed");
+            Require(std::filesystem::file_size(journalFile) == bytes.size() + recordBytes + appended.writtenBytes - beforeAppend.writtenBytes, "tail recovery discarded an external complete record or retained torn bytes");
+            auto recovered = StartPipelineJournalReplay(context, fingerprint, hooks);
+            Require(recovered != nullptr, "the replay after the external append did not start");
+            recovered->Wait();
+            Require(PipelineJournalTotals().loadedModules == 5 && PipelineJournalTotals().loadedRecipes == 4 && PipelineJournalTotals().droppedRecords == 0, "the external append and torn-tail recovery did not replay cleanly");
         }
         {
             const auto before = PipelineJournalTotals();
@@ -10017,7 +10108,7 @@ void pipelineJournalTests() {
         }
         {
             const std::uint32_t meshWithoutOutputSize = 2u;
-            std::fstream file(PipelineJournalPath(), std::ios::in | std::ios::out | std::ios::binary);
+            std::fstream file(journalFile, std::ios::in | std::ios::out | std::ios::binary);
             file.seekp(4);
             file.write(reinterpret_cast<const char*>(&meshWithoutOutputSize), sizeof(meshWithoutOutputSize));
             file.close();
@@ -10060,8 +10151,8 @@ int main(int argc, char** argv) {
             commandBatchFenceFailureTests();
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-journal") {
-            pipelineJournalTests();
+        if (argc == 2 && (std::string_view(argv[1]) == "--pipeline-journal" || std::string_view(argv[1]) == "--pipeline-journal-long-paths" || std::string_view(argv[1]) == "--pipeline-journal-extended-paths")) {
+            pipelineJournalTests(std::string_view(argv[1]) != "--pipeline-journal", std::string_view(argv[1]) == "--pipeline-journal-extended-paths");
             std::cout << "pipeline journal recipe, record and replay tests passed\n";
             return 0;
         }
@@ -10235,6 +10326,11 @@ int main(int argc, char** argv) {
             std::cout << "Multisampled DCC state checks passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--depth-bounds-state") {
+            DepthBoundsBiasTests();
+            std::cout << "Depth bounds state checks passed\n";
+            return 0;
+        }
         {
             const AgcDriver::Graphics::Context context{};
             const AgcDriver::Graphics::State state{};
@@ -10403,7 +10499,8 @@ int main(int argc, char** argv) {
             [](std::optional<VkDeviceSize> headroom) {
                 mock.memoryLimit = headroom.has_value() ? std::optional<VkDeviceSize>(mock.allocatedBytes + *headroom) : std::nullopt;
             },
-            [] { return mock.allocationAttempts; }
+            [] { return mock.allocationAttempts; },
+            [](std::optional<VkDeviceSize> limit) { mock.importLimit = limit; }
         });
         Require(mock.live == 0, "BDA resources leaked Vulkan objects");
         RunGuestAllocationTests();

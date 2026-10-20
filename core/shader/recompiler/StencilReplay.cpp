@@ -2,10 +2,10 @@
 #include "Optimization/MaskedSelectEliminator.hpp"
 #include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
 #include <iterator>
 #include <map>
-#include <cstdlib>
 #include <numeric>
 #include <optional>
 #include <set>

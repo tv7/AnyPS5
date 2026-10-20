@@ -84,9 +84,9 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 240, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(CompiledShaderArtifact) == 280, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 208, "ShaderInvocation changed: update the invocation encoder");
-static_assert(sizeof(RecompileResult) == 480, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 520, "RecompileResult changed: update EncodeResult and DecodeResult");
 static_assert(sizeof(DescriptorBinding) == 656, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
@@ -140,7 +140,7 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 23, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 39, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 40, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -195,7 +195,10 @@ private:
 
 std::shared_ptr<const MappedFile> MapFile(const std::filesystem::path& path) {
 #ifdef _WIN32
-    const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    std::error_code error;
+    const auto filename = NativeCachePath_nid_no_patch(path, error);
+    if (error) return nullptr;
+    const HANDLE file = CreateFileW(filename.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return nullptr;
     LARGE_INTEGER length{};
     if (!GetFileSizeEx(file, &length) || length.QuadPart <= 0 || static_cast<unsigned long long>(length.QuadPart) > std::numeric_limits<std::size_t>::max()) {
@@ -504,6 +507,17 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.barycentricEmulation.active);
     writer.Value(result.barycentricEmulation.smooth);
     writer.Value(result.barycentricEmulation.linear);
+    writer.Value(result.meshBarycentrics.has_value());
+    if (result.meshBarycentrics) {
+        writer.Value(result.meshBarycentrics->emulation.active);
+        writer.Value(result.meshBarycentrics->emulation.smooth);
+        writer.Value(result.meshBarycentrics->emulation.linear);
+        writer.List(result.meshBarycentrics->parameters, [](Writer& out, const FragmentParameter& parameter) {
+            out.Value(parameter.location);
+            out.Value(parameter.sourceLocation);
+            out.Value(parameter.perVertex);
+        });
+    }
     writer.Values(std::span<const std::uint32_t>(result.stencilReferences));
     writer.Value(result.stencilReplaySafe);
     writer.Value(result.stencilReferenceDword);
@@ -551,6 +565,21 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.barycentricEmulation.active);
     reader.Value(result.barycentricEmulation.smooth);
     reader.Value(result.barycentricEmulation.linear);
+    bool hasMeshBarycentrics = false;
+    reader.Value(hasMeshBarycentrics);
+    result.meshBarycentrics.reset();
+    if (hasMeshBarycentrics) {
+        MeshBarycentricLayout layout;
+        reader.Value(layout.emulation.active);
+        reader.Value(layout.emulation.smooth);
+        reader.Value(layout.emulation.linear);
+        reader.List(layout.parameters, 9, [](Reader& in, FragmentParameter& parameter) {
+            in.Value(parameter.location);
+            in.Value(parameter.sourceLocation);
+            in.Value(parameter.perVertex);
+        });
+        result.meshBarycentrics = std::move(layout);
+    }
     reader.Values(result.stencilReferences);
     reader.Value(result.stencilReplaySafe);
     reader.Value(result.stencilReferenceDword);
@@ -711,6 +740,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.cubeFaceCompatible);
         out.Value(image.flatVolumeCompatible);
         out.Value(image.singleMipPlaneBiasCompatible);
+        out.Value(image.volumeArraySampleCompatible);
         out.Value(image.flatLineCompatible);
         out.Value(image.flatVolumeLineCompatible);
         out.Value(image.foldTexelOffsetsOnly);
@@ -814,6 +844,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.cubeFaceCompatible);
         in.Value(image.flatVolumeCompatible);
         in.Value(image.singleMipPlaneBiasCompatible);
+        in.Value(image.volumeArraySampleCompatible);
         in.Value(image.flatLineCompatible);
         in.Value(image.flatVolumeLineCompatible);
         in.Value(image.foldTexelOffsetsOnly);
