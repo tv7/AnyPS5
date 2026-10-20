@@ -125,6 +125,21 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             }
             if (drawIdentity != 0) drawRelocationPending = {drawKey, drawAlias, drawIdentity};
             if (drawAlias != 0) relocateDrawEntry(queue, drawAlias, entry, decode, userPatches);
+            if (profile) {
+                // Local profiling: where a missing draw entry stands with relocation, every 10 s.
+                static std::array<std::uint64_t, 7> why{};
+                static auto last = std::chrono::steady_clock::now();
+                const bool learned = drawRelocations.contains(drawIdentity);
+                const auto trialIt = drawRelocationTrials.find(drawIdentity);
+                const bool idle = trialIt != drawRelocationTrials.end() && trialIt->second.idle != 0;
+                ++why[!learned ? 0 : relocation == nullptr ? (idle ? 1 : 2) : drawAlias == 0 ? 3 : entry == nullptr ? 4 : 5];
+                if (learned) why[6] += drawRelocations.at(drawIdentity)->words.size();
+                if (std::chrono::steady_clock::now() - last > std::chrono::seconds(10)) {
+                    last = std::chrono::steady_clock::now();
+                    std::fprintf(stderr, "[draw-reloc-miss] (10 s): identity not learned %llu, idle trial %llu, no relocation %llu, no alias (unreadable) %llu, alias not found %llu, relocated %llu; relocatable words per learned miss %.1f; %zu identities learned, %zu aliases\n", static_cast<unsigned long long>(why[0]), static_cast<unsigned long long>(why[1]), static_cast<unsigned long long>(why[2]), static_cast<unsigned long long>(why[3]), static_cast<unsigned long long>(why[4]), static_cast<unsigned long long>(why[5]), (why[1] + why[2] + why[3] + why[4] + why[5]) != 0 ? static_cast<double>(why[6]) / static_cast<double>(why[1] + why[2] + why[3] + why[4] + why[5]) : 0.0, drawRelocations.size(), drawAliases.size());
+                    why = {};
+                }
+            }
             if (relocation != nullptr) {
                 auto& trial = drawRelocationTrials[drawIdentity];
                 ++trial.lookups;
