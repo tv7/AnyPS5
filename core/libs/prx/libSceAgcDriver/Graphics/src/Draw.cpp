@@ -1426,6 +1426,11 @@ struct ResolvedResources {
     const ShaderResources::BuildTiming* built = nullptr;
 };
 
+std::array<std::atomic<std::uint64_t>, 6>& DrawLookupOutcomes() {
+    static std::array<std::atomic<std::uint64_t>, 6> outcomes{};
+    return outcomes;
+}
+
 ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
@@ -1441,22 +1446,62 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
+    // APS5_PROFILE_DRAW: the lookup phase split into key, find, revalidate, moved buffers and alias
+    // checks, every 10 s (local profiling).
+    static const bool profileLookup = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    static std::array<std::atomic<std::uint64_t>, 6> lookupNs{};
+    auto& outcomes = DrawLookupOutcomes();
+    static std::atomic<std::int64_t> lookupReport{0};
+    auto lookupAt = profileLookup ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto lookupStep = [&](std::size_t index) {
+        if (!profileLookup) return;
+        const auto now = std::chrono::steady_clock::now();
+        lookupNs[index].fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - lookupAt).count()), std::memory_order_relaxed);
+        lookupAt = now;
+    };
+    struct LookupReport {
+        ~LookupReport() {
+            if (!profileLookup) return;
+            const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            auto last = lookupReport.load(std::memory_order_relaxed);
+            if (last == 0) {
+                lookupReport.compare_exchange_strong(last, now, std::memory_order_relaxed);
+                return;
+            }
+            if (now - last < 10'000'000'000ll || !lookupReport.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
+            std::array<double, 6> ms{};
+            for (std::size_t index = 0; index < ms.size(); index++) ms[index] = static_cast<double>(lookupNs[index].exchange(0, std::memory_order_relaxed)) / 1e6;
+            std::array<unsigned long long, 6> c{};
+            for (std::size_t index = 0; index < c.size(); index++) c[index] = DrawLookupOutcomes()[index].exchange(0, std::memory_order_relaxed);
+            std::fprintf(stderr, "[draw-lookup] (10 s, ms): key %.1f find %.1f revalidate %.1f moved %.1f aliases %.1f lookups %.0f; not found %llu, found invalid %llu, found not movable %llu; builds cacheable %llu inserted %llu not reusable %llu\n", ms[0], ms[1], ms[2], ms[3], ms[4], ms[5] * 1e6, c[0], c[1], c[2], c[3], c[4], c[5]);
+        }
+    } lookupReportAtEnd;
     if (resolved.cacheable) {
+        if (profileLookup) lookupNs[5].fetch_add(1, std::memory_order_relaxed);
         resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
-        if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
+        lookupStep(0);
+        auto cached = SharedResourceCache().Find(resolved.contentKey);
+        if (cached == nullptr && profileLookup) outcomes[0].fetch_add(1, std::memory_order_relaxed);
+        if (cached != nullptr) {
+            lookupStep(1);
             const bool valid = cached->Revalidate(shaders);
+            lookupStep(2);
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
             if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder);
+            lookupStep(3);
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
+                lookupStep(4);
                 resolved.resources = std::move(cached);
                 resolved.moved = std::move(*moved);
                 outcome.kind = KindTemplateHit;
                 countCache(&DrawProfile::cacheHits);
             } else if (valid) {
+                if (profileLookup) outcomes[2].fetch_add(1, std::memory_order_relaxed);
                 countCache(&DrawProfile::cacheMisses);
             } else {
+                if (profileLookup) outcomes[1].fetch_add(1, std::memory_order_relaxed);
                 SharedResourceCache().Remove(resolved.contentKey);
                 countCache(&DrawProfile::cacheInvalidated);
             }
@@ -2438,6 +2483,11 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     // A build this recorded draw can share with later identical ones goes into the cache (a cache
     // hit is reusable by construction, so `recorded` holds for it; one with completion work is
     // never reusable).
+    static const bool profileInserts = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (profileInserts && cacheable && built != nullptr) {
+        DrawLookupOutcomes()[3].fetch_add(1, std::memory_order_relaxed);
+        DrawLookupOutcomes()[recorded && resources->Reusable() ? 4 : 5].fetch_add(1, std::memory_order_relaxed);
+    }
     if (cacheable && built != nullptr && recorded && resources->Reusable()) SharedResourceCache().Insert(contentKey, resources);
     // A recorded draw renders into its resident targets in the general layout (recordDraw). Debug
     // aid: APS5_DRAW_TRANSITIONS=1 keeps the per-draw upload and download barriers, the layout
