@@ -1,5 +1,7 @@
 #include "ComputePipelineFixture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include <cstring>
+#include <iterator>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -141,6 +143,14 @@ int main(int argc, char** argv) {
         if (statistics != nullptr && std::string_view(statistics) != "0" && *statistics != '\0') throw std::runtime_error("unset APS5_PIPELINE_STATS before benchmarking");
         auto capture = options.fixture ? AgcDriver::ComputePipelineFixture() : AgcDriver::ComputePipelineCapture::Read(options.source);
         if (replayStats) capture.flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
+        if (const char* spirvFile = std::getenv("APS5_REPLAY_SPIRV"); spirvFile != nullptr && *spirvFile != '\0') {
+            std::ifstream file(spirvFile, std::ios::binary);
+            const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            if (bytes.empty() || bytes.size() % 4u != 0u) throw std::runtime_error("APS5_REPLAY_SPIRV is not a SPIR-V file");
+            capture.spirv.assign(bytes.size() / 4u, 0u);
+            std::memcpy(capture.spirv.data(), bytes.data(), bytes.size());
+            std::cerr << "replaying " << capture.spirv.size() << " SPIR-V words from " << spirvFile << '\n';
+        }
         if (!replayStats && (capture.flags & VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) != 0) throw std::runtime_error("capture requests pipeline statistics; capture again with APS5_PIPELINE_STATS disabled");
         const auto cache = ReadCache(options.cacheIn);
         AgcDriver::VulkanDevice device(AgcDriver::VulkanDevice::CompileOnly{});

@@ -5,6 +5,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvInputOutput.hpp"
 #include "PipelineSpecialization.hpp"
+#include <cstdlib>
 #include <algorithm>
 #include <array>
 #include <utility>
@@ -169,7 +170,9 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     const auto unaligned = nonzero(state, misalignment);
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, TypeU32(state), unaligned, next, index);
-    const auto bounds = EmitMemoryElementInBounds(state, access, last);
+    // APS5_UNCHECKED_BUFFER_LOADS (local experiment): every direct buffer read counts as in bounds.
+    static const bool unchecked = std::getenv("APS5_UNCHECKED_BUFFER_LOADS") != nullptr;
+    const auto bounds = unchecked ? ConstantBool(state, true) : EmitMemoryElementInBounds(state, access, last);
     const auto inBounds = enable != 0u ? both(state, enable, bounds) : bounds;
     const auto load = [&](std::uint32_t word) {
         const auto value = state.module.AllocateId();
