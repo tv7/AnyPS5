@@ -1,6 +1,10 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include <cstdio>
+#include <vector>
+#include <string>
+#include <mutex>
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -146,11 +150,43 @@ std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegis
     if (verify && key != RegisterStateKey(queue, allUserWords, false)) throw std::runtime_error("incremental register fingerprint disagrees with full state");
     if (aliased) {
         mixOther(shapeKey);
+        // APS5_TRACE_ALIAS (local): which alias input changed since the shader set's previous key.
+        static const bool traceAlias = std::getenv("APS5_TRACE_ALIAS") != nullptr;
+        struct AliasWord {
+            std::uint32_t offset, value;
+            std::uint64_t content;
+            bool relocatable;
+        };
+        std::vector<AliasWord> traced;
         forEachKeyedUserWord(queue, allUserWords, [&](std::uint32_t offset, std::uint32_t value) {
             mixOther(offset);
             const auto word = std::find_if(relocation->words.begin(), relocation->words.end(), [&](const RelocatableUserWord& candidate) { return candidate.reg == offset; });
-            mixOther(word != relocation->words.end() ? relocatedContentKey(*word, value, readable) : value);
+            const auto mixed = word != relocation->words.end() ? relocatedContentKey(*word, value, readable) : value;
+            if (traceAlias) traced.push_back({offset, value, mixed, word != relocation->words.end()});
+            mixOther(mixed);
         });
+        if (traceAlias) {
+            static std::mutex traceMutex;
+            static std::unordered_map<const DrawRelocation*, std::vector<AliasWord>> previous;
+            static int printed = 0;
+            std::lock_guard traceLock(traceMutex);
+            auto& before = previous[relocation];
+            if (!before.empty() && printed < 300) {
+                std::string line;
+                if (before.size() != traced.size()) line = " word count " + std::to_string(before.size()) + " -> " + std::to_string(traced.size());
+                for (std::size_t i = 0; i < traced.size() && i < before.size(); ++i) {
+                    if (before[i].offset == traced[i].offset && before[i].content == traced[i].content) continue;
+                    char item[160];
+                    std::snprintf(item, sizeof(item), " [0x%x%s 0x%08x->0x%08x%s]", traced[i].offset, traced[i].relocatable ? " reloc" : "", before[i].value, traced[i].value, traced[i].relocatable ? (before[i].content != traced[i].content ? " content differs" : "") : "");
+                    line += item;
+                }
+                if (!line.empty()) {
+                    ++printed;
+                    std::fprintf(stderr, "[alias-trace] set %p (%zu relocatable):%s\n", static_cast<const void*>(relocation), relocation->words.size(), line.c_str());
+                }
+            }
+            before = std::move(traced);
+        }
         mixOther(deviceSerial);
     }
     const auto mix = [&](std::uint64_t value) {
