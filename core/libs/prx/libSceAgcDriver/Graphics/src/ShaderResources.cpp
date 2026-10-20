@@ -3270,6 +3270,26 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         CompletePendingCpuWrites(context, image->Descriptor().baseAddress, static_cast<std::size_t>(image->GuestBytes()));
         if (image->Descriptor().dccAddress != 0) CompletePendingCpuWrites(context, image->Descriptor().dccAddress, DccKeyBytes(image->GuestBytes()));
     }
+    if (profile) {
+        // Local profiling: the pending-write pre-pass, its range counts and the rest, every 10 s.
+        static std::array<std::atomic<std::uint64_t>, 5> pre{};
+        static std::atomic<std::int64_t> preReport{0};
+        const auto now = std::chrono::steady_clock::now();
+        pre[0].fetch_add(1, std::memory_order_relaxed);
+        pre[1].fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - start).count()), std::memory_order_relaxed);
+        pre[2].fetch_add(directRegions.size(), std::memory_order_relaxed);
+        pre[3].fetch_add(describedRanges.size(), std::memory_order_relaxed);
+        pre[4].fetch_add(storageTextures.size(), std::memory_order_relaxed);
+        const auto nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        auto last = preReport.load(std::memory_order_relaxed);
+        if (last == 0) {
+            preReport.compare_exchange_strong(last, nowNs, std::memory_order_relaxed);
+        } else if (nowNs - last >= 10'000'000'000ll && preReport.compare_exchange_strong(last, nowNs, std::memory_order_relaxed)) {
+            std::array<unsigned long long, 5> v{};
+            for (std::size_t index = 0; index < v.size(); index++) v[index] = pre[index].exchange(0, std::memory_order_relaxed);
+            std::fprintf(stderr, "[revalidate-pre] (10 s): %llu calls, pre-pass %.1f ms; ranges: direct %llu described %llu storage %llu\n", v[0], static_cast<double>(v[1]) / 1e6, v[2], v[3], v[4]);
+        }
+    }
     // APS5_NO_FAST_REVALIDATE=1 always repeats the lookups.
     static const bool noFast = std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr;
     const auto finish = [&](bool fast, bool ok, ProofFailure failure = ProofFailure::Other) {
