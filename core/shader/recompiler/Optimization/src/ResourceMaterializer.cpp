@@ -1692,7 +1692,15 @@ ResolutionMemo& resolutionMemo() {
 
 constexpr std::size_t ResolutionMemoEntries = 256;
 constexpr std::size_t ResolutionMemoVariantEntries = 4;
-constexpr std::size_t ResolutionMemoWords = std::size_t{1} << 23u;
+// APS5_TABLE_RESOLUTION_MEMO_MIB: the memo's word budget (local experiment; default 32 MiB).
+std::size_t resolutionMemoWords() {
+    static const std::size_t words = [] {
+        const char* value = std::getenv("APS5_TABLE_RESOLUTION_MEMO_MIB");
+        return value != nullptr ? static_cast<std::size_t>(std::strtoull(value, nullptr, 10)) * (std::size_t{1} << 18u) : std::size_t{1} << 23u;
+    }();
+    return words;
+}
+#define ResolutionMemoWords resolutionMemoWords()
 
 bool sameColumns(const std::vector<ImageTableColumnSnapshot>& left, const std::vector<ImageTableColumnSnapshot>& right) {
     if (left.size() != right.size()) return false;
@@ -1951,6 +1959,7 @@ std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTab
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static std::array<std::atomic<std::uint64_t>, 8> why{};
     static std::atomic<std::int64_t> lastReport{0};
+    static std::atomic<std::uint64_t> footprintWords{0};
     const auto report = [&] {
         if (!profile) return;
         const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -1962,7 +1971,7 @@ std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTab
         if (now - last < 10'000'000'000ll || !lastReport.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
         std::array<std::uint64_t, 8> v{};
         for (std::size_t index = 0; index < v.size(); index++) v[index] = why[index].exchange(0, std::memory_order_relaxed);
-        std::fprintf(stderr, "[table-resolve] (10 s): shared %llu, resolved %llu (no entry %llu, columns differ %llu of which equal contents %llu, reducing differs %llu), too big to keep %llu, resolve ms %.1f\n", static_cast<unsigned long long>(v[0]), static_cast<unsigned long long>(v[1]), static_cast<unsigned long long>(v[2]), static_cast<unsigned long long>(v[3]), static_cast<unsigned long long>(v[4]), static_cast<unsigned long long>(v[5]), static_cast<unsigned long long>(v[6]), static_cast<double>(v[7]) / 1e6);
+        std::fprintf(stderr, "[table-resolve] (10 s): shared %llu, resolved %llu (no entry %llu, columns differ %llu of which equal contents %llu, reducing differs %llu), too big to keep %llu, resolve ms %.1f, resolved MiB %.1f, memo entries %zu\n", static_cast<unsigned long long>(v[0]), static_cast<unsigned long long>(v[1]), static_cast<unsigned long long>(v[2]), static_cast<unsigned long long>(v[3]), static_cast<unsigned long long>(v[4]), static_cast<unsigned long long>(v[5]), static_cast<unsigned long long>(v[6]), static_cast<double>(v[7]) / 1e6, static_cast<double>(footprintWords.exchange(0, std::memory_order_relaxed)) / 262144.0, memo.entries.size());
     };
     {
         std::lock_guard lock(memo.mutex);
@@ -2003,6 +2012,7 @@ std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTab
     }
     report();
     const auto footprint = resolutionFootprint(*resolved, snapshot.tables.tables);
+    if (profile) footprintWords.fetch_add(footprint, std::memory_order_relaxed);
     if (footprint > ResolutionMemoWords) {
         if (profile) why[6].fetch_add(1, std::memory_order_relaxed);
         return resolved;
