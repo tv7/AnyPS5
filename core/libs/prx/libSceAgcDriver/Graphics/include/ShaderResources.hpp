@@ -746,6 +746,10 @@ private:
 // it when it goes). Never destroyed: entries belong to the device, not to static teardown.
 ResourceCache& SharedResourceCache();
 
+// Wolverine native executor: AnyPS5's shared image caches (storage surfaces and sampled textures).
+std::shared_ptr<StorageTexture> WolverineCachedStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip, bool written);
+std::shared_ptr<Texture> WolverineCachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, bool depthCompare);
+
 }
 
 #endif

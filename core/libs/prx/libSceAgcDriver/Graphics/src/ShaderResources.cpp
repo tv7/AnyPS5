@@ -5748,4 +5748,13 @@ bool ShaderResources::ReadsImage(const StorageTexture* image) const {
     return std::any_of(storageTextures.begin(), storageTextures.end(), [&](const auto& storage) { return storage.get() == image; });
 }
 
+
+std::shared_ptr<StorageTexture> WolverineCachedStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip, bool written) {
+    return cachedStorageTexture(context, words, resource, mip, 0, written);
+}
+
+std::shared_ptr<Texture> WolverineCachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, bool depthCompare) {
+    return cachedTexture(context, words, resource, components, 0, depthCompare);
+}
+
 }

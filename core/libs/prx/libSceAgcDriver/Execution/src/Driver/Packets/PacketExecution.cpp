@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include <atomic>
+#include "WolverineGpu.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -235,6 +236,9 @@ void Driver::execute(const Submission& submission) {
         const auto packet = std::span(submission.commands).subspan(cursor, count);
         const auto opcode = (header >> 8u) & 0xffu;
         auto nextCursor = cursor + count;
+        if (WolverineGpu::Mode() >= 3 && opcode != 0x15 && opcode != 0x16 && opcode != 0x69 && opcode != 0x76 && opcode != 0x79 && opcode != 0x7a && opcode != 0x63 && opcode != 0x64 && opcode != 0x9f && opcode != 0x11 && opcode != 0x2a && opcode != 0x2f && opcode != 0x26 && opcode != 0x13 && opcode != 0x28 && (opcode != 0x10 || header == FlipPacketHeader)) {
+            WolverineGpu::FlushPending();
+        }
         if ((opcode == 0x37 || opcode == 0x40 || opcode == 0x50) && WolSkip('a')) {
             cursor = nextCursor;
             continue;
@@ -401,7 +405,11 @@ void Driver::execute(const Submission& submission) {
                     timed(&WorkerProfile::dispatchMs, [&] { resolveGroupAhead(submission, queue, cursor); });
                 }
             }
-            if (opcode == 0x15) timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
+            if (WolverineGpu::Mode() >= 3 && !WolverineGpu::TakesDispatch(queue.shader)) WolverineGpu::FlushPending();
+            if (WolverineGpu::Mode() >= 3 && WolverineGpu::TakesDispatch(queue.shader)) {
+                if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, opcode);
+                timed(&WorkerProfile::dispatchMs, [&] { WolverineGpu::DispatchInDriver(queue.shader, packet.data(), static_cast<std::uint32_t>(packet.size()), queue.dispatchIndirectBase); });
+            } else if (opcode == 0x15) timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
             else timed(&WorkerProfile::dispatchMs, [&] { dispatchIndirect(queue, packet, submission); });
             Pm4::NoteDispatchRegisters(packet, queue);
             Graphics::Recorder::CountRecordedWork();
