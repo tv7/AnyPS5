@@ -2962,7 +2962,17 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         const auto address = surface.resource.baseAddress;
         const auto bytes = static_cast<std::size_t>(surface.bytes);
         surface.collected = GuestMemory::CollectWrites(address, bytes);
-        if (surface.collected == 0) return fail(FastFail::Collect);
+        if (surface.collected == 0) {
+            // Local profiling: the first 24 distinct surfaces whose memory cannot be collected.
+            static std::mutex noteMutex;
+            static std::vector<std::uint64_t> noted;
+            std::lock_guard noteLock(noteMutex);
+            if (noted.size() < 24 && std::find(noted.begin(), noted.end(), address) == noted.end()) {
+                noted.push_back(address);
+                std::fprintf(stderr, "[collect-fail] %s 0x%llx + 0x%llx\n", "texture", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes));
+            }
+        }
+        return fail(FastFail::Collect);
         const auto* source = surface.source;
         if (!keyProofs) {
             // Without proofs the keys are compared with the record's (a cleared view's identity
@@ -3018,7 +3028,17 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             depthGuardRefusals.fetch_add(1, std::memory_order_relaxed);
             return fail(FastFail::Depth);
         }
-        if (GuestMemory::CollectWrites(address, bytes) == 0) return fail(FastFail::Collect);
+        if (GuestMemory::CollectWrites(address, bytes) == 0) {
+            // Local profiling: the first 24 distinct surfaces whose memory cannot be collected.
+            static std::mutex noteMutex;
+            static std::vector<std::uint64_t> noted;
+            std::lock_guard noteLock(noteMutex);
+            if (noted.size() < 24 && std::find(noted.begin(), noted.end(), address) == noted.end()) {
+                noted.push_back(address);
+                std::fprintf(stderr, "[collect-fail] %s 0x%llx + 0x%llx\n", "storage", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes));
+            }
+        }
+        return fail(FastFail::Collect);
         if (own.dccAddress != 0) {
             // Refresh's unchanged branch (its key compare against the keys the content was
             // uploaded under, through the image's proof; the memory query below), minus its
