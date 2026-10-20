@@ -155,9 +155,6 @@ private:
     Tier smallTier;
     Tier largeTier;
     Tier deviceTier;
-    VkPhysicalDeviceMemoryProperties memoryProperties{};
-    VkPhysicalDevice physical = VK_NULL_HANDLE;
-    PFN_vkGetPhysicalDeviceMemoryProperties2 memoryProperties2 = nullptr;
     std::chrono::steady_clock::time_point heapRead{};
     bool heapOver = false;
     VkDeviceSize imageBudget = 0;

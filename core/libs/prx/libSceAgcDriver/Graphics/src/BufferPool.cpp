@@ -43,9 +43,6 @@ BufferPool::BufferPool(const Context& context) : maxSlots(std::max<std::size_t>(
     smallTier.budget = smallBudget;
     largeTier.budget = budget;
     deviceTier.budget = deviceBudget(context);
-    memoryProperties = context.memory;
-    physical = context.physical;
-    memoryProperties2 = context.memoryProperties2;
     imageBudget = ImageBudget(deviceTier.budget);
 }
 
