@@ -58,23 +58,30 @@ std::uint32_t VectorWindowElement(SpirvEmitterState& state, std::uint32_t index)
 
 std::uint32_t AccessNarrowedWindow(SpirvEmitterState& state, std::uint32_t index, const std::function<std::uint32_t(std::uint32_t)>& access) {
     const auto& slots = state.vectorWindowSlots.at(state.laneHalf);
-    const auto arrayLabel = state.module.AllocateId();
+    const bool allSlots = state.vectorWindowAllSlots;
+    const auto arrayLabel = allSlots ? 0u : state.module.AllocateId();
     const auto slotsLabel = state.module.AllocateId();
     const auto slotsMerge = state.module.AllocateId();
     const auto merge = state.module.AllocateId();
-    const auto inArray = Binary(state, spv::OpULessThan, TypeBool(state), index, ConstantU32(state, state.vectorWindowIndexed));
-    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
-    state.module.AddFunction(spv::OpBranchConditional, inArray, arrayLabel, slotsLabel);
-    EmitLabel(state, arrayLabel);
-    const auto fromArray = access(VectorWindowElement(state, index));
-    const auto arrayExit = state.currentLabel;
-    state.module.AddFunction(spv::OpBranch, merge);
+    std::uint32_t fromArray = 0;
+    std::uint32_t arrayExit = 0;
+    if (allSlots) {
+        state.module.AddFunction(spv::OpBranch, slotsLabel);
+    } else {
+        const auto inArray = Binary(state, spv::OpULessThan, TypeBool(state), index, ConstantU32(state, state.vectorWindowIndexed));
+        state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, inArray, arrayLabel, slotsLabel);
+        EmitLabel(state, arrayLabel);
+        fromArray = access(VectorWindowElement(state, index));
+        arrayExit = state.currentLabel;
+        state.module.AddFunction(spv::OpBranch, merge);
+    }
     EmitLabel(state, slotsLabel);
     std::vector<std::uint32_t> labels(slots.size());
     std::vector<std::uint32_t> words{spv::OpSwitch, index, slotsMerge};
     for (std::size_t slot = 0; slot < slots.size(); ++slot) {
         labels[slot] = state.module.AllocateId();
-        words.push_back(state.vectorWindowIndexed + static_cast<std::uint32_t>(slot));
+        words.push_back((allSlots ? 0u : state.vectorWindowIndexed) + static_cast<std::uint32_t>(slot));
         words.push_back(labels[slot]);
     }
     state.module.AddFunction(spv::OpSelectionMerge, slotsMerge, spv::SelectionControlMaskNone);
@@ -93,6 +100,7 @@ std::uint32_t AccessNarrowedWindow(SpirvEmitterState& state, std::uint32_t index
     std::vector<std::uint32_t> phi{spv::OpPhi, TypeU32(state), fromSlots};
     phi.insert(phi.end(), incoming.begin(), incoming.end());
     state.module.AddFunction(std::span<const std::uint32_t>(phi));
+    if (allSlots) return fromSlots;
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);
     const auto value = state.module.AllocateId();
@@ -103,6 +111,7 @@ std::uint32_t AccessNarrowedWindow(SpirvEmitterState& state, std::uint32_t index
 std::uint32_t DirectWindowElement(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const IrValue* index = inst.Argument(0)->Resolve();
+    if (state.vectorWindowAllSlots) return index->HasImmediate() ? state.vectorWindowSlots.at(state.laneHalf).at(index->ImmediateU32()) : 0u;
     if (state.vectorWindowIndexed == 0u) return VectorWindowElement(state, ctx.Arg(inst, 0u));
     if (!index->HasImmediate()) return 0u;
     if (index->ImmediateU32() < state.vectorWindowIndexed) return VectorWindowElement(state, ctx.Arg(inst, 0u));
