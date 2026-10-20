@@ -1947,19 +1947,66 @@ std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTab
     auto reducing = reducingSamplers(info, snapshot);
     auto& memo = resolutionMemo();
     auto& totals = tableReuseTotals();
+    // APS5_PROFILE_DRAW: why resolutions miss the memo, every 10 s (local profiling).
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    static std::array<std::atomic<std::uint64_t>, 8> why{};
+    static std::atomic<std::int64_t> lastReport{0};
+    const auto report = [&] {
+        if (!profile) return;
+        const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto last = lastReport.load(std::memory_order_relaxed);
+        if (last == 0) {
+            lastReport.compare_exchange_strong(last, now, std::memory_order_relaxed);
+            return;
+        }
+        if (now - last < 10'000'000'000ll || !lastReport.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
+        std::array<std::uint64_t, 8> v{};
+        for (std::size_t index = 0; index < v.size(); index++) v[index] = why[index].exchange(0, std::memory_order_relaxed);
+        std::fprintf(stderr, "[table-resolve] (10 s): shared %llu, resolved %llu (no entry %llu, columns differ %llu of which equal contents %llu, reducing differs %llu), too big to keep %llu, resolve ms %.1f\n", static_cast<unsigned long long>(v[0]), static_cast<unsigned long long>(v[1]), static_cast<unsigned long long>(v[2]), static_cast<unsigned long long>(v[3]), static_cast<unsigned long long>(v[4]), static_cast<unsigned long long>(v[5]), static_cast<unsigned long long>(v[6]), static_cast<double>(v[7]) / 1e6);
+    };
     {
         std::lock_guard lock(memo.mutex);
         const auto found = std::find_if(memo.entries.begin(), memo.entries.end(), [&](const ResolutionMemoEntry& entry) { return entry.memoKey == memoKey && entry.reducing == reducing && sameColumns(entry.tables, snapshot.tables.tables); });
         if (found != memo.entries.end()) {
             std::rotate(memo.entries.begin(), found, found + 1);
             totals.resolutionsShared.fetch_add(1, std::memory_order_relaxed);
+            if (profile) why[0].fetch_add(1, std::memory_order_relaxed);
+            report();
             return memo.entries.front().resolved;
         }
+        if (profile) {
+            const auto same = std::find_if(memo.entries.begin(), memo.entries.end(), [&](const ResolutionMemoEntry& entry) { return entry.memoKey == memoKey; });
+            if (same == memo.entries.end()) {
+                why[2].fetch_add(1, std::memory_order_relaxed);
+            } else if (same->reducing != reducing) {
+                why[5].fetch_add(1, std::memory_order_relaxed);
+            } else {
+                why[3].fetch_add(1, std::memory_order_relaxed);
+                const auto& left = same->tables;
+                const auto& right = snapshot.tables.tables;
+                bool equal = left.size() == right.size();
+                for (std::size_t index = 0; equal && index < left.size(); index++) {
+                    const auto& a = left[index];
+                    const auto& b = right[index];
+                    equal = a.base == b.base && a.size == b.size && a.records == b.records && a.keys == b.keys && a.fault == b.fault && a.outside == b.outside && a.codes.Hash() == b.codes.Hash() && a.words.Hash() == b.words.Hash();
+                }
+                if (equal) why[4].fetch_add(1, std::memory_order_relaxed);
+            }
+        }
     }
+    const auto resolveStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     auto resolved = std::make_shared<const ResolvedImageTables>(ResolveImageTables(info, snapshot, memoKey));
     totals.resolutions.fetch_add(1, std::memory_order_relaxed);
+    if (profile) {
+        why[1].fetch_add(1, std::memory_order_relaxed);
+        why[7].fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - resolveStart).count()), std::memory_order_relaxed);
+    }
+    report();
     const auto footprint = resolutionFootprint(*resolved, snapshot.tables.tables);
-    if (footprint > ResolutionMemoWords) return resolved;
+    if (footprint > ResolutionMemoWords) {
+        if (profile) why[6].fetch_add(1, std::memory_order_relaxed);
+        return resolved;
+    }
     std::lock_guard lock(memo.mutex);
     memo.entries.insert(memo.entries.begin(), ResolutionMemoEntry{memoKey, snapshot.tables.tables, std::move(reducing), resolved, footprint});
     std::size_t kept = 0;
