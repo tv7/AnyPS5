@@ -761,6 +761,10 @@ ShaderRecompiler::LinkedCalls LinkUserDataCallees(const ShaderRecompiler::Recomp
 
 }
 
+ShaderRecompiler::LinkedCalls WolverineLinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request) {
+    return LinkUserDataCallees(request);
+}
+
 ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);

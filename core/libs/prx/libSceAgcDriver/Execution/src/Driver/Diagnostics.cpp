@@ -17,9 +17,19 @@ std::uint64_t SkippedShader() {
     return skipped;
 }
 
+bool WolSkipCompute(std::uint64_t address) {
+    static const char* mode = std::getenv("APS5_WOL_SKIP_WORK");
+    if (mode == nullptr) return false;
+    if (mode[0] == 'C') return address >= 0x150000000ull;
+    return mode[0] == 'a' || mode[0] == 'c';
+}
+
+bool WolSkip(char kind) {
+    static const char* mode = std::getenv("APS5_WOL_SKIP_WORK");
+    return mode != nullptr && (mode[0] == 'a' || mode[0] == kind);
+}
+
 bool ShaderSkipped(std::uint64_t address) {
-    static const bool skipAll = std::getenv("APS5_WOL_SKIP_WORK") != nullptr;
-    if (skipAll) return true;
     static const std::vector<std::uint64_t> skipped = [] {
         std::vector<std::uint64_t> addresses;
         const char* text = std::getenv("APS5_SKIP_SHADER");

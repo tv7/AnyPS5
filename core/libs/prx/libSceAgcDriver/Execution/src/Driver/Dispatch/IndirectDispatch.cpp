@@ -80,7 +80,7 @@ std::array<std::uint32_t, 5> Driver::readDispatchArguments(std::uint32_t queue, 
 }
 
 void Driver::dispatchIndirect(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission) {
-    if (ShaderSkipped((static_cast<std::uint64_t>(readRegister(queue.shader, 0x20c)) << 8u) | (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20d) & 0xffu) << 40u))) return;
+    if (WolSkipCompute((static_cast<std::uint64_t>(readRegister(queue.shader, 0x20c)) << 8u) | (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20d) & 0xffu) << 40u)) || ShaderSkipped((static_cast<std::uint64_t>(readRegister(queue.shader, 0x20c)) << 8u) | (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20d) & 0xffu) << 40u))) return;
     const auto arguments = Pm4::DispatchArgumentAddress(packet, queue);
     const auto initiator = packet.back();
     const int path = indirectArgumentsPath(packet, arguments);
