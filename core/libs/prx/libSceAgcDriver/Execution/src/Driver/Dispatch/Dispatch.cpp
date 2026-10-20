@@ -13,6 +13,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include <atomic>
+#include <cstdio>
 #include <algorithm>
 #include <cstdlib>
 #include <stdexcept>
@@ -425,6 +427,12 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
     }
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : std::uint64_t{groups[0]} * groups[1] * groups[2] * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
+    // APS5_TRACE_PROGRAM=<hex code address> (local): the first 40 dispatches of that program.
+    static const std::uint64_t traceProgram = [] { const char* text = std::getenv("APS5_TRACE_PROGRAM"); return text ? std::strtoull(text, nullptr, 16) : 0ull; }();
+    if (traceProgram != 0 && address == traceProgram) {
+        static std::atomic<int> printed{0};
+        if (printed.fetch_add(1) < 40) std::fprintf(stderr, "[trace-program] 0x%llx queue 0x%x groups %u x %u x %u of %u x %u x %u threads%s\n", static_cast<unsigned long long>(address), submission.queue, groups[0], groups[1], groups[2], compute.numThreads[0], compute.numThreads[1], compute.numThreads[2], indirectArguments != 0 ? " (indirect)" : "");
+    }
     static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
     if (traceIo) {
 
