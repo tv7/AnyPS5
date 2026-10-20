@@ -56,8 +56,9 @@ struct MeshArgumentRules {
     std::uint32_t maxGroups;
     std::uint32_t maxInstances;
     std::uint32_t maxTotal;
+    bool indexed;
 };
-MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount);
+MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::optional<std::uint32_t> indexCount);
 MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules);
 
 // Why DrawWithRecipe did not record from the recipe (the caller then runs Draw): the draw is not
