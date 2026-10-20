@@ -3586,8 +3586,34 @@ bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::s
 
 }
 
+namespace {
+// APS5_PROFILE_DRAW: why entries leave the resource cache, every 10 s (local profiling).
+std::array<std::atomic<std::uint64_t>, 4>& cacheRemovals() {
+    static std::array<std::atomic<std::uint64_t>, 4> removals{};
+    return removals;
+}
+
+void reportCacheRemovals() {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!profile) return;
+    static std::atomic<std::int64_t> last{0};
+    const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto previous = last.load(std::memory_order_relaxed);
+    if (previous == 0) {
+        last.compare_exchange_strong(previous, now, std::memory_order_relaxed);
+        return;
+    }
+    if (now - previous < 10'000'000'000ll || !last.compare_exchange_strong(previous, now, std::memory_order_relaxed)) return;
+    auto& r = cacheRemovals();
+    std::array<unsigned long long, 4> v{};
+    for (std::size_t index = 0; index < v.size(); index++) v[index] = r[index].exchange(0, std::memory_order_relaxed);
+    std::fprintf(stderr, "[rescache-removals] (10 s): storage images dropped %llu removing %llu entries, released textures removed %llu entries, key removals %llu\n", v[0], v[1], v[2], v[3]);
+}
+}
+
 std::shared_ptr<ShaderResources> ResourceCache::Find(const Key& key) {
     resourceCacheFinds.fetch_add(1, std::memory_order_relaxed);
+    reportCacheRemovals();
     std::lock_guard lock(mutex);
     const auto found = index.find(key);
     if (found == index.end()) {
@@ -3808,6 +3834,7 @@ void ResourceCache::Insert(const Key& key, std::shared_ptr<ShaderResources> reso
 }
 
 void ResourceCache::Remove(const Key& key, const ShaderResources* object) {
+    cacheRemovals()[3].fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(mutex);
     if (object != nullptr) {
         const auto found = index.find(key);
@@ -3818,11 +3845,13 @@ void ResourceCache::Remove(const Key& key, const ShaderResources* object) {
 
 void ResourceCache::RemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted) {
     std::lock_guard lock(mutex);
+    cacheRemovals()[0].fetch_add(1, std::memory_order_relaxed);
     for (auto it = entries.begin(); it != entries.end();) {
         if (!it->second->ReadsImage(image)) {
             ++it;
             continue;
         }
+        cacheRemovals()[1].fetch_add(1, std::memory_order_relaxed);
         if (evicted != nullptr) evicted->push_back(std::move(it->second));
         index.erase(it->first);
         it = entries.erase(it);
@@ -3836,6 +3865,7 @@ void ResourceCache::dropReleasedTextures(std::vector<std::shared_ptr<ShaderResou
             ++it;
             continue;
         }
+        cacheRemovals()[2].fetch_add(1, std::memory_order_relaxed);
         if (evicted != nullptr) evicted->push_back(std::move(it->second));
         index.erase(it->first);
         it = entries.erase(it);
