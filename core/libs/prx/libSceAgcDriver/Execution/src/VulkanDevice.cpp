@@ -978,7 +978,7 @@ ComputePipelineReplayResult VulkanDevice::ReplayComputePipeline(const ComputePip
     check(state->DeviceFunction<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(state->device, &layoutInfo, nullptr, &objects.layout), "vkCreatePipelineLayout replay");
     result.layoutMilliseconds = elapsed(phase);
     phase = std::chrono::steady_clock::now();
-    CreateComputePipeline(state->device, state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines"), replay.cache, objects.module, objects.layout, capture.flags, capture.stageFlags, specialization.Info(), capture.requiredSubgroupSize, &objects.pipeline);
+    CreateComputePipeline(state->device, state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines"), replay.cache, objects.module, objects.layout, capture.flags, capture.stageFlags, specialization.Info(), capture.requiredSubgroupSize, &objects.pipeline); if (state->pipelineExecutableInfo && (capture.flags & VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) != 0) Graphics::LogPipelineStatistics_nid_no_patch(graphicsContext(), objects.pipeline);
     result.pipelineMilliseconds = elapsed(phase);
     phase = std::chrono::steady_clock::now();
     const auto getCache = state->DeviceFunction<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");

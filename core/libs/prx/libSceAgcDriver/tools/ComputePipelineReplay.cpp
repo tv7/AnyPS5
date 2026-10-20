@@ -135,10 +135,13 @@ int main(int argc, char** argv) {
             std::cout << AgcDriver::ComputePipelineFixture().Write(options.fixtureDirectory).string() << '\n';
             return 0;
         }
-        const auto* statistics = std::getenv("APS5_PIPELINE_STATS");
+        const bool replayStats = std::getenv("APS5_REPLAY_STATS") != nullptr;
+        if (replayStats) _putenv("APS5_PIPELINE_STATS=1");
+        const auto* statistics = replayStats ? nullptr : std::getenv("APS5_PIPELINE_STATS");
         if (statistics != nullptr && std::string_view(statistics) != "0" && *statistics != '\0') throw std::runtime_error("unset APS5_PIPELINE_STATS before benchmarking");
-        const auto capture = options.fixture ? AgcDriver::ComputePipelineFixture() : AgcDriver::ComputePipelineCapture::Read(options.source);
-        if ((capture.flags & VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) != 0) throw std::runtime_error("capture requests pipeline statistics; capture again with APS5_PIPELINE_STATS disabled");
+        auto capture = options.fixture ? AgcDriver::ComputePipelineFixture() : AgcDriver::ComputePipelineCapture::Read(options.source);
+        if (replayStats) capture.flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
+        if (!replayStats && (capture.flags & VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) != 0) throw std::runtime_error("capture requests pipeline statistics; capture again with APS5_PIPELINE_STATS disabled");
         const auto cache = ReadCache(options.cacheIn);
         AgcDriver::VulkanDevice device(AgcDriver::VulkanDevice::CompileOnly{});
         const auto replay = device.ReplayComputePipeline(capture, cache);
