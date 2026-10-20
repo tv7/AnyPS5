@@ -686,7 +686,12 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             return DrawVerdict::Rejected;
         }
     }
-    if (pipelined && !drawParameters.indirect && deferredLabels().labels.empty()) {
+    // A GPU-side indirect draw (the CPU-read ones returned above) is committed on the queue-0
+    // worker like a direct one: its records are read by the GPU when the recorded draw runs, and
+    // the queued read ranges include them, so a later write over them drains the pipeline first.
+    // APS5_NO_PIPELINED_GPU_INDIRECT=1 records them inline as before.
+    static const bool pipelinedGpuIndirect = std::getenv("APS5_NO_PIPELINED_GPU_INDIRECT") == nullptr;
+    if (pipelined && (!drawParameters.indirect || pipelinedGpuIndirect) && deferredLabels().labels.empty()) {
         phaseTiming.Phase(DrawRowVectors);
         auto writes = drawWriteRanges(graphics, stages);
         const auto commitQueue = submission.queue;
