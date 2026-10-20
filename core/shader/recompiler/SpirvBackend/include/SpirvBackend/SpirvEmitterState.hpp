@@ -198,10 +198,6 @@ struct SpirvEmitterState {
     std::array<std::uint32_t, 2> scratchVariable {};
     std::array<std::uint32_t, 2> vectorWindowVariable {};
     std::uint32_t vectorWindowIndexed = 0;
-    // Every window register is a slot of its own (vectorWindowSlots holds them all, from 0): a small
-    // window whose dynamic indices may reach any register, read through a switch instead of an
-    // indexed array.
-    bool vectorWindowAllSlots = false;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
     std::array<std::uint32_t, ImageBindingCount> imageVariables {};
     std::uint32_t samplerVariable = 0;

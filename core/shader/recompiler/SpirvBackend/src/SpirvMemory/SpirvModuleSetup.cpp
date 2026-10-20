@@ -3,7 +3,6 @@
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvInputOutput.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
-#include <cstdio>
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <cstdlib>
@@ -228,25 +227,8 @@ void DefineModule(SpirvEmitterState& state) {
     if (const auto window = state.program.Metadata().vectorWindowSize; window != 0u) {
         static const bool narrowWindow = std::getenv("APS5_NO_WINDOW_NARROWING") == nullptr;
         state.vectorWindowIndexed = narrowWindow ? IndexedWindowSlots(state.program) : 0u;
-        // A dynamically indexed Function array is kept in local memory by drivers, so every access
-        // of its registers pays for it, the constant-index ones included (the bulk: Wolverine's
-        // 0x11d0376e00 has 6 dynamic accesses and ~2,600 constant ones to the 4 indexed registers of
-        // its 87-register window). When the indexed part would be at most MaxSlotWindow registers
-        // (the narrowed prefix, or a whole small window that cannot be narrowed), the window is all
-        // slots instead and its dynamic accesses switch over them. APS5_NO_WINDOW_SLOTS=1 keeps the
-        // array.
-        constexpr std::uint32_t MaxSlotWindow = 16;
-        static const bool slotWindow = std::getenv("APS5_NO_WINDOW_SLOTS") == nullptr;
-        const auto indexedPart = state.vectorWindowIndexed != 0u ? state.vectorWindowIndexed : window;
-        state.vectorWindowAllSlots = narrowWindow && slotWindow && indexedPart <= MaxSlotWindow;
-        if (std::getenv("APS5_TRACE_WINDOW") != nullptr) std::fprintf(stderr, "[window] size %u indexed %u all slots %d lanes %u\n", window, state.vectorWindowIndexed, state.vectorWindowAllSlots ? 1 : 0, state.laneCount);
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.vectorWindowVariable.at(half) = state.module.AllocateId();
-            if (state.vectorWindowAllSlots) {
-                auto& slots = state.vectorWindowSlots.at(half);
-                for (std::uint32_t slot = 0; slot < window; slot++) slots.push_back(state.module.AllocateId());
-                continue;
-            }
             if (state.vectorWindowIndexed == 0u) continue;
             auto& slots = state.vectorWindowSlots.at(half);
             for (std::uint32_t slot = state.vectorWindowIndexed; slot < window; slot++) slots.push_back(state.module.AllocateId());
