@@ -18,6 +18,8 @@ std::uint64_t SkippedShader() {
 }
 
 bool ShaderSkipped(std::uint64_t address) {
+    static const bool skipAll = std::getenv("APS5_WOL_SKIP_WORK") != nullptr;
+    if (skipAll) return true;
     static const std::vector<std::uint64_t> skipped = [] {
         std::vector<std::uint64_t> addresses;
         const char* text = std::getenv("APS5_SKIP_SHADER");

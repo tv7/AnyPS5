@@ -334,13 +334,17 @@ set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/TraceFile.
         INCLUDE_DIRECTORIES ${agcZlibIncludeDir}
 )
 
+set(WOLVERINE_NATIVE_DIR "G:/AnyPS5-win64/wolverine-port/native" CACHE PATH "Wolverine native port sources")
+file(GLOB wolverineNativeSources CONFIGURE_DEPENDS "${WOLVERINE_NATIVE_DIR}/src/*.cpp")
 add_library(libSceAgcDriver SHARED EXCLUDE_FROM_ALL
         ${agcDriverSources}
+        ${wolverineNativeSources}
 )
 add_dependencies(libSceAgcDriver agc_trace_revision)
 
 target_include_directories(libSceAgcDriver PRIVATE
         ${LIBS_INCLUDE_DIR}
+        ${WOLVERINE_NATIVE_DIR}/include
         ${agcTextureDetileGeneratedRoot}
         ${CMAKE_SOURCE_DIR}/core/shader/recompiler/RdnaDecoder/include
         ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
