@@ -472,6 +472,14 @@ public:
     }
 
 private:
+    // Local profiling: the first 24 ranges collectable() refuses, and why.
+    static void noteRefusal(std::uintptr_t address, std::uintptr_t end, std::uintptr_t at, const char* why, DWORD state, DWORD type) {
+        static int noted = 0;
+        if (noted >= 24) return;
+        ++noted;
+        std::fprintf(stderr, "[collectable] refused 0x%llx-0x%llx at 0x%llx: %s (state 0x%lx type 0x%lx)\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(end), static_cast<unsigned long long>(at), why, static_cast<unsigned long>(state), static_cast<unsigned long>(type));
+    }
+
     bool collectable(std::uintptr_t address, std::uintptr_t end) {
         const auto proven = collectableRanges.upper_bound(address);
         if (proven != collectableRanges.begin() && std::prev(proven)->second >= end) return true;
@@ -479,12 +487,18 @@ private:
         for (auto cursor = address; cursor < end;) {
             const auto base = cursor & ~(pageBytes - 1);
             if (const auto found = viewAt(base, position); found != views.end()) {
-                if (found->second.protection == PAGE_NOACCESS || (found->second.resident && !watchResident)) return false;
+                if (found->second.protection == PAGE_NOACCESS || (found->second.resident && !watchResident)) {
+                    noteRefusal(address, end, cursor, found->second.protection == PAGE_NOACCESS ? "view without access" : "resident view not watched", 0, 0);
+                    return false;
+                }
                 cursor = std::min(end, base + pageBytes);
                 continue;
             }
             const auto memory = query(cursor);
-            if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
+            if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) {
+                noteRefusal(address, end, cursor, "not committed private memory", memory.State, memory.Type);
+                return false;
+            }
             cursor = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
         }
         remember(collectableRanges, address, end);
