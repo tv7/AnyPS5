@@ -325,7 +325,10 @@ int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
   case SYSTEM_SERVICE_PARAM_ID_100: *value = 0; break;
   default:
    if ((paramId >= 101 && paramId <= 111) || (paramId >= 200 && paramId <= 213) || paramId == 300) {
-    NotImplemented_nid_no_patch("sceSystemServiceParamGetInt: registry-backed parameter");
+    // local (Wolverine personal build): answer 0 as main did before the throw, and say which.
+    std::fprintf(stderr, "[systemservice] local: registry-backed parameter %d answers 0\n", paramId);
+    *value = 0;
+    return SYSTEM_SERVICE_OK;
    }
    return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
