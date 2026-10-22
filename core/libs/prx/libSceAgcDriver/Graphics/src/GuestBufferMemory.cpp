@@ -388,7 +388,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
         ++state.settlesParked;
     }
 #endif
-    if (WolverineGpu::KeepUntilIdle(holder)) return;
+    WolverineGpu::KeepUntilIdle(holder);
     auto* recorder = Recorder::Active();
     if (recorder == nullptr) return;
     if (hold) recorder->KeepThroughHold(std::move(holder));

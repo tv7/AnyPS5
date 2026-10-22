@@ -224,6 +224,7 @@ void Driver::execute(const Submission& submission) {
     }
     clearResolvedAhead();
     gateOpened() = true;
+    WolverineGpu::WaitForOurWork();
     struct ClearAhead {
         ~ClearAhead() { clearResolvedAhead(); }
     } clearAhead;
