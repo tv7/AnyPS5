@@ -71,6 +71,12 @@ public:
     // The Vulkan device handle (a Recipe names the device it was built on).
     VkDevice Device() const;
     Graphics::Context WolverineContext() const { return graphicsContext(); }
+    // local: extra queues of the main family for the Wolverine executor (APS5_WOL_GPU=2), and the
+    // recorder's timeline semaphore (signalled with SubmitAndEpoch's serials; null without one).
+    std::vector<VkQueue> WolverineQueues() const;
+    VkSemaphore WolverineTimeline() const;
+    // Submits the recorded batches without reaping (a cross-queue submitter); their timeline serial, 0 if none in flight.
+    std::uint64_t WolverineSubmitRecorded();
     // Drains everything under the caller's GpuMutex: recorder Sync plus vkDeviceWaitIdle. For suspend,
     // resize, device replacement, CPU fill fallback and APS5_DRAIN_ALL; the packet-loop drains use the
     // three-step form below so the GPU wait happens without the mutex.

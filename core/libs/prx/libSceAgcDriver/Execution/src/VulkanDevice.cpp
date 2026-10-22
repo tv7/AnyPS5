@@ -375,6 +375,7 @@ struct VulkanDevice::State {
     VkQueue sparseQueue = VK_NULL_HANDLE;
     std::mutex sparseQueueMutex;
     VkQueue settleQueue = VK_NULL_HANDLE;
+    std::vector<VkQueue> wolverineQueues;
     std::uint32_t settleFamily = 0;
     VkCommandPool settlePool = VK_NULL_HANDLE;
     std::mutex settleQueueMutex;
@@ -1564,7 +1565,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     queueInfo.queueFamilyIndex = family;
     queueInfo.queueCount = 1;
     queueInfo.pQueuePriorities = &priority;
-    const float priorities[2]{1.0f, 1.0f};
+    const float priorities[8]{1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     bool settleQueue = false;
     std::uint32_t settleFamily = family;
     std::uint32_t settleIndex = 0;
@@ -1594,6 +1595,16 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
                 if (copies(i)) settleFamily = i, settleQueue = true;
             }
         }
+    }
+    // local (Wolverine native executor, APS5_WOL_GPU=2): up to three more queues of the main family,
+    // one per guest queue it runs (see WolverineQueues).
+    std::uint32_t wolverineFirst = 0;
+    std::uint32_t wolverineCount = 0;
+    if (const char* wol = std::getenv("APS5_WOL_GPU"); wol != nullptr && wol[0] == '2' && !queues.empty() && family < queues.size()) {
+        wolverineFirst = queueInfo.queueCount;
+        wolverineCount = std::min<std::uint32_t>(3u, queues[family].queueCount > wolverineFirst ? queues[family].queueCount - wolverineFirst : 0u);
+        queueInfo.queueCount += wolverineCount;
+        queueInfo.pQueuePriorities = priorities;
     }
     VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     deviceInfo.queueCreateInfoCount = 1;
@@ -1985,6 +1996,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, 0, &state->queue);
     state->queueFamily = family;
+    for (std::uint32_t i = 0; i < wolverineCount; ++i) {
+        VkQueue extra = VK_NULL_HANDLE;
+        state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, wolverineFirst + i, &extra);
+        state->wolverineQueues.push_back(extra);
+    }
     if (settleQueue) {
         state->settleFamily = settleFamily;
         state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, settleFamily, settleIndex, &state->settleQueue);
@@ -2239,6 +2255,18 @@ void VulkanDevice::SubmitRecorded(bool reapFirst) {
     // mutex (see the header), which a poller or compute worker must never do for queue 0.
     if (reapFirst && OpportunisticReap()) state->recorder->Reap();
     state->recorder->Submit();
+}
+
+std::vector<VkQueue> VulkanDevice::WolverineQueues() const {
+    return state->wolverineQueues;
+}
+
+std::uint64_t VulkanDevice::WolverineSubmitRecorded() {
+    return state->recorder ? state->recorder->SubmitAndEpoch() : 0;
+}
+
+VkSemaphore VulkanDevice::WolverineTimeline() const {
+    return state->recorder ? state->recorder->TimelineSemaphore() : VK_NULL_HANDLE;
 }
 
 bool VulkanDevice::CanWaitUnlocked() const {

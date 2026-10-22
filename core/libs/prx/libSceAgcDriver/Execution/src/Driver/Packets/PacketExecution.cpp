@@ -224,7 +224,7 @@ void Driver::execute(const Submission& submission) {
     }
     clearResolvedAhead();
     gateOpened() = true;
-    WolverineGpu::WaitForOurWork();
+    WolverineGpu::WaitForOurWork(submission.queue);
     struct ClearAhead {
         ~ClearAhead() { clearResolvedAhead(); }
     } clearAhead;
@@ -240,7 +240,7 @@ void Driver::execute(const Submission& submission) {
         if (WolverineGpu::Mode() >= 3 && opcode != 0x15 && opcode != 0x16 && opcode != 0x69 && opcode != 0x76 && opcode != 0x79 && opcode != 0x7a && opcode != 0x63 && opcode != 0x64 && opcode != 0x9f && opcode != 0x11 && opcode != 0x2a && opcode != 0x2f && opcode != 0x26 && opcode != 0x13 && opcode != 0x28 && (opcode != 0x10 || header == FlipPacketHeader)) {
             WolverineGpu::FlushPending();
         }
-        if ((opcode == 0x37 || opcode == 0x40 || opcode == 0x50) && WolSkip('a')) {
+        if ((opcode == 0x37 || opcode == 0x40 || opcode == 0x50 || ((opcode == 0x3c || opcode == 0x93) && WolverineGpu::Mode() == 2)) && WolSkip('a')) {
             cursor = nextCursor;
             continue;
         }
