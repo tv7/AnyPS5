@@ -43,6 +43,9 @@ BufferPool::BufferPool(const Context& context) : maxSlots(std::max<std::size_t>(
     smallTier.budget = smallBudget;
     largeTier.budget = budget;
     deviceTier.budget = deviceBudget(context);
+    memoryProperties = context.memory;
+    physical = context.physical;
+    memoryProperties2 = context.memoryProperties2;
     imageBudget = ImageBudget(deviceTier.budget);
 }
 
@@ -152,9 +155,11 @@ VkDeviceMemory BufferPool::TakeImageMemory(const VkMemoryAllocateInfo& allocatio
         ++clock;
         const auto found = deviceTier.free.find({static_cast<std::size_t>(allocation.allocationSize), 0, memoryProperties.memoryTypes[type].propertyFlags, type});
         if (found != deviceTier.free.end() && !found->second.empty()) {
-            const auto memory = found->second.back().allocation.memory;
-            found->second.pop_back();
-            if (found->second.empty()) deviceTier.free.erase(found);
+            auto& slots = found->second;
+            const auto memory = slots.back().allocation.memory;
+            imageOrder.erase(slots.back().order);
+            slots.pop_back();
+            if (slots.empty()) deviceTier.free.erase(found);
             --deviceTier.slots;
             deviceTier.retainedBytes -= allocation.allocationSize;
             --imageSlots;
@@ -187,7 +192,16 @@ void BufferPool::PutImageMemory(VkDeviceMemory memory, VkDeviceSize bytes, std::
             while (imageSlots != 0 && imageBytes + bytes > imageBudget && evictOldestImage(evicted)) {
             }
             while (deviceTier.slots != 0 && (deviceTier.retainedBytes + bytes > deviceTier.budget || deviceTier.slots >= maxSlots)) evictOldest(deviceTier, evicted);
-            deviceTier.free[{allocation.bytes, 0, allocation.properties, memoryType}].push_back({allocation, ++clock});
+            const SlotKey imageKey{allocation.bytes, 0, allocation.properties, memoryType};
+            auto& slots = deviceTier.free[imageKey];
+            slots.push_back({allocation, ++clock, {}});
+            try {
+                slots.back().order = imageOrder.insert(imageOrder.end(), &slots.back());
+            } catch (...) {
+                slots.pop_back();
+                if (slots.empty()) deviceTier.free.erase(imageKey);
+                throw;
+            }
             ++deviceTier.slots;
             deviceTier.retainedBytes += bytes;
             ++imageSlots;
@@ -412,6 +426,7 @@ void BufferPool::evictOldest(Tier& tier, std::vector<BufferAllocation>& evicted)
     evicted.push_back(oldest->second.front().allocation);
     tier.retainedBytes -= oldest->second.front().allocation.allocationBytes;
     if (oldest->second.front().allocation.buffer == VK_NULL_HANDLE) {
+        imageOrder.erase(oldest->second.front().order);
         imageBytes -= oldest->second.front().allocation.allocationBytes;
         --imageSlots;
         ++imageEvictions;
@@ -423,18 +438,17 @@ void BufferPool::evictOldest(Tier& tier, std::vector<BufferAllocation>& evicted)
 }
 
 bool BufferPool::evictOldestImage(std::vector<BufferAllocation>& evicted) {
-    auto oldest = deviceTier.free.end();
-    for (auto it = deviceTier.free.begin(); it != deviceTier.free.end(); ++it) {
-        if (it->second.front().allocation.buffer != VK_NULL_HANDLE) continue;
-        if (oldest == deviceTier.free.end() || it->second.front().lastUse < oldest->second.front().lastUse) oldest = it;
-    }
-    if (oldest == deviceTier.free.end()) return false;
-    evicted.push_back(oldest->second.front().allocation);
-    const auto bytes = oldest->second.front().allocation.allocationBytes;
+    if (imageOrder.empty()) return false;
+    const Slot* oldest = imageOrder.front();
+    const SlotKey key{oldest->allocation.bytes, 0, oldest->allocation.properties, oldest->allocation.memoryType};
+    const auto found = deviceTier.free.find(key);
+    evicted.push_back(oldest->allocation);
+    imageOrder.pop_front();
+    const auto bytes = oldest->allocation.allocationBytes;
     deviceTier.retainedBytes -= bytes;
     imageBytes -= bytes;
-    oldest->second.pop_front();
-    if (oldest->second.empty()) deviceTier.free.erase(oldest);
+    found->second.pop_front();
+    if (found->second.empty()) deviceTier.free.erase(found);
     --deviceTier.slots;
     --imageSlots;
     ++deviceTier.evictions;
@@ -468,6 +482,7 @@ VkDeviceSize BufferPool::trim() {
         imageEvictions += imageSlots;
         imageBytes = 0;
         imageSlots = 0;
+        imageOrder.clear();
     }
     VkDeviceSize bytes = 0;
     for (const auto* tier : {&retiredSmall, &retiredLarge, &retiredDevice}) {
@@ -505,7 +520,7 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
             evicted.push_back(allocation);
         } else {
             while (tier.slots != 0 && (tier.retainedBytes + allocation.allocationBytes > tier.budget || tier.slots >= maxSlots)) evictOldest(tier, evicted);
-            tier.free[{allocation.bytes, allocation.usage, allocation.properties}].push_back({allocation, ++clock});
+            tier.free[{allocation.bytes, allocation.usage, allocation.properties}].push_back({allocation, ++clock, {}});
             ++tier.slots;
             tier.retainedBytes += allocation.allocationBytes;
         }

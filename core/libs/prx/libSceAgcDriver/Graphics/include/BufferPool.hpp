@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -96,6 +97,7 @@ private:
     struct Slot {
         BufferAllocation allocation;
         std::uint64_t lastUse;
+        std::list<Slot*>::iterator order;
     };
     struct SlotKey {
         std::size_t bytes;
@@ -147,9 +149,9 @@ private:
     PFN_vkFreeMemory freeMemory;
     PFN_vkAllocateMemory allocateMemory;
     PFN_vkMapMemory mapMemory;
-    VkPhysicalDevice physical;
-    VkPhysicalDeviceMemoryProperties memoryProperties;
-    PFN_vkGetPhysicalDeviceMemoryProperties2 memoryProperties2;
+    VkPhysicalDevice physical = VK_NULL_HANDLE;
+    VkPhysicalDeviceMemoryProperties memoryProperties{};
+    PFN_vkGetPhysicalDeviceMemoryProperties2 memoryProperties2 = nullptr;
     std::mutex mutex;
     // Not `small`/`large`: <rpcndr.h> (via <windows.h>) defines `small` as a macro.
     Tier smallTier;
@@ -163,6 +165,7 @@ private:
     std::uint64_t imageHits = 0;
     std::uint64_t imageMisses = 0;
     std::uint64_t imageEvictions = 0;
+    std::list<Slot*> imageOrder;
     std::uint64_t clock = 0;
     std::mutex slabMutex;
     std::unordered_map<std::uint64_t, Slab> slabs;

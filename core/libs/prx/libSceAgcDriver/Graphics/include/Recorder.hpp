@@ -233,6 +233,7 @@ public:
         std::uint64_t end;
         bool computed;
     };
+    static std::vector<std::size_t> QueuedWriteOrder(std::span<const QueuedWrite> writes);
     static std::vector<std::size_t> QueuedWriteGroups(std::span<const QueuedWrite> writes);
     // Waits only for the batches up to the newest one that writes the range (submitting the open
     // batch when it is that one); later batches stay in flight. Fences of one queue signal in
@@ -808,6 +809,8 @@ private:
     VkSemaphore timeline = VK_NULL_HANDLE;
     VkSemaphore submitHold = VK_NULL_HANDLE;
     std::uint64_t submitHoldValue = 0;
+    struct ProgressWatcher;
+    std::unique_ptr<ProgressWatcher> progressWatcher;
     // Identity for a thread that released the mutex around a wait (syncThroughUnlocked): the
     // recorder may have been torn down meanwhile, so it is looked up by this id, not by pointer.
     std::uint64_t id = 0;

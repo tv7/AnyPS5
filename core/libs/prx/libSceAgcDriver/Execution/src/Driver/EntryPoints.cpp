@@ -1,12 +1,14 @@
 #include "prx/libSceAgcDriver/Execution/include/ThreadPriority.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include <mutex>
 #include "WolverineGpu.hpp"
 
 namespace AgcDriver {
 
 void Submit(const Packet* packet, std::uint32_t queue) try {
+    KernelNoteGpuSubmit_nid_no_patch();
     if (packet != nullptr) WolverineGpu::OnSubmit(packet->addr, packet->dw_num, queue);
     DriverDetail::Driver::Get().Submit(packet, queue);
 } catch (const ProcessShutdown&) {
