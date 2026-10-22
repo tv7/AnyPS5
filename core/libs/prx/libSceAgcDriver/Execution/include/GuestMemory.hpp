@@ -151,9 +151,12 @@ public:
     // current acquisition is the outermost, so code that releases the mutex around a wait
     // (Recorder::SyncThrough for the flush hook) gives up no caller's hold.
     std::uint32_t DepthOnThisThread() const;
+    // local (Wolverine watchdog): the return address of the outermost lock() now held, or null.
+    const void* HolderSite() const { return holderSite.load(std::memory_order_relaxed); }
 
 private:
     void acquired();
+    std::atomic<const void*> holderSite{nullptr};
     std::recursive_mutex mutex;
     // The holder's thread token and recursion depth, written by the holder only; another thread
     // reads the owner just to see that it is not itself.

@@ -2166,6 +2166,13 @@ void AssertGpuLockHeld(const char* where) {
 }
 
 void GpuMutexType::lock() {
+    struct SiteNote {
+        GpuMutexType* mutex;
+        const void* site;
+        ~SiteNote() {
+            if (mutex->depth == 1) mutex->holderSite.store(site, std::memory_order_relaxed);
+        }
+    } note{this, __builtin_return_address(0)};
     if (!GpuLockProfiled()) {
         auto* trace = PerformanceTrace::Recording() ? PerformanceTrace::Thread() : nullptr;
         if (trace == nullptr) {
