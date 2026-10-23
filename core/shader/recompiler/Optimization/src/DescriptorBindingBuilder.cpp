@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstdlib>
 #include <cstring>
 #include <set>
 #include <stdexcept>
@@ -618,6 +619,21 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageSamplers.push_back(samplers);
             }
             physical.count = static_cast<std::uint32_t>(tables->elements.size());
+            // local (Wolverine): APS5_TABLE_COUNT_STEP=<n> pads the table with null entries up to a
+            // multiple of n, so a streamed bindless table that grows by a few entries keeps one pipeline
+            // (its length is baked into the module; the map never indexes the padding).
+            if (static const std::uint32_t step = [] { const char* value = std::getenv("APS5_TABLE_COUNT_STEP"); return value != nullptr ? static_cast<std::uint32_t>(std::strtoul(value, nullptr, 0)) : 0u; }(); step > 1u && physical.count % step != 0u) {
+                const std::uint32_t padded = (physical.count / step + 1u) * step;
+                physical.guestDescriptor.resize(static_cast<std::size_t>(padded) * 8u, 0u);
+                ImageResource shape;
+                physical.imageShapes.resize(padded, ImageShapeForResource(shape));
+                physical.imageDepthCompare.resize(padded, false);
+                physical.imageWritten.resize(padded, false);
+                physical.imageAtomic.resize(padded, false);
+                if (!physical.imageAtomic64.empty()) physical.imageAtomic64.resize(padded, false);
+                physical.imageSamplers.resize(padded, 0u);
+                physical.count = padded;
+            }
             break;
         case DescriptorRole::SamplerTable:
             if (tables == nullptr) fail("DescriptorBindingBuilder::Populate sampler table elements were not resolved");
