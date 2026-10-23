@@ -14,6 +14,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include <chrono>
+#include <thread>
 #include <atomic>
 #include <cstdio>
 #include <algorithm>
@@ -441,7 +443,17 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     static const std::uint64_t traceProgram = [] { const char* text = std::getenv("APS5_TRACE_PROGRAM"); return text ? std::strtoull(text, nullptr, 16) : 0ull; }();
     if (traceProgram != 0 && address == traceProgram) {
         static std::atomic<int> printed{0};
-        if (printed.fetch_add(1) < 40) std::fprintf(stderr, "[trace-program] 0x%llx queue 0x%x groups %u x %u x %u of %u x %u x %u threads%s\n", static_cast<unsigned long long>(address), submission.queue, groups[0], groups[1], groups[2], compute.numThreads[0], compute.numThreads[1], compute.numThreads[2], indirectArguments != 0 ? " (indirect)" : "");
+        const int index = printed.fetch_add(1);
+        if (index < 40) std::fprintf(stderr, "[trace-program] 0x%llx queue 0x%x groups %u x %u x %u of %u x %u x %u threads%s\n", static_cast<unsigned long long>(address), submission.queue, groups[0], groups[1], groups[2], compute.numThreads[0], compute.numThreads[1], compute.numThreads[2], indirectArguments != 0 ? " (indirect)" : "");
+        // Indirect: the group counts in guest memory 3 s later (after the GPU wrote them), with the address.
+        if (indirectArguments != 0 && index < 3000) {
+            const std::uint64_t args = indirectArguments;
+            std::thread([args, index] {
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                const auto* words = reinterpret_cast<const volatile std::uint32_t*>(args);
+                std::fprintf(stderr, "[trace-indirect] #%d args %llx = %u %u %u\n", index, static_cast<unsigned long long>(args), words[0], words[1], words[2]);
+            }).detach();
+        }
     }
     static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
     if (traceIo) {
